@@ -24,8 +24,14 @@ def check(condition: bool, explanation: str):
 
 
 def run(command: list[str]):
-    return subprocess.run(command, check=True, capture_output=True,
-                          text=True, timeout=120).stdout
+    outcome = subprocess.run(command, check=False, capture_output=True,
+                             text=True, timeout=120)
+    if outcome.returncode:
+        raise RuntimeError(
+            "cross-compiler command failed (exit " + str(outcome.returncode) +
+            "):\\n" + " ".join(command) + "\\n" + outcome.stderr
+        )
+    return outcome.stdout
 
 
 def parse_pe(path: Path, expect_dll: bool):
