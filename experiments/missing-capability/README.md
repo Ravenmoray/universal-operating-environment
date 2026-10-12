@@ -41,7 +41,7 @@ The Python oracle is intentionally separate from the candidate provider source.
 
 ## Test status
 
-The CI workflow is defined at [.github/workflows/missing-capability.yml](../../.github/workflows/missing-capability.yml). The report includes exact compiled binary hashes, a host description, failures, bounded test counts and explicit limitations.
+The CI workflow is defined at [.github/workflows/missing-capability.yml](../../.github/workflows/missing-capability.yml). It runs on trusted pushes and maintainer-initiated manual runs only, **not on untrusted pull requests**, because it compiles and executes C source. The report includes exact compiled binary hashes, a host description, failures, bounded test counts and explicit limitations.
 
 **Important:** The test executes local, project-owned compiled C. It does **not** provide a secure sandbox for running untrusted binaries. A future repair agent must use independent isolation and approval gates before executing generated code.
 
