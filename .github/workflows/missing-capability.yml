@@ -1,0 +1,37 @@
+name: Missing-capability ELF experiment
+
+on:
+  push:
+    paths:
+      - "experiments/missing-capability/**"
+      - "experiments/capability-graph/uoe_graph/**"
+      - ".github/workflows/missing-capability.yml"
+  pull_request:
+    paths:
+      - "experiments/missing-capability/**"
+      - "experiments/capability-graph/uoe_graph/**"
+      - ".github/workflows/missing-capability.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-controlled-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify compiler availability
+        run: cc --version
+      - name: Exercise missing dependency, invalid adapters, verified provider and clean rebuild
+        run: python3 experiments/missing-capability/verify.py --output /tmp/uoe-missing-capability-report.json
+      - name: Upload machine-readable test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: missing-capability-report
+          path: /tmp/uoe-missing-capability-report.json
+          if-no-files-found: error
+          retention-days: 30
