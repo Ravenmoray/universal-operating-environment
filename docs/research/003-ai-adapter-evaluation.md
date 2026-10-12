@@ -22,6 +22,14 @@ The test run [38323963232](https://github.com/Ravenmoray/universal-operating-env
 
 **Important provenance:** ChatGPT (GPT-6) authored the candidate with the public repository available. The reference implementation and its tests were not withheld. This was not an independent, blinded, repeated-trial experiment, and there is no claim of AI discovering an unknown proprietary API or autonomously modifying a live operating system.
 
+## Additional cross-platform fixture evidence
+
+A project-owned PE32+ x86-64 client compiled from the same interface contract ran under Wine 9.0 on an ephemeral Linux GitHub runner. [CI run 38324324417](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38324324417) confirmed negative cases for a missing DLL, missing symbol, and a behaviorally wrong provider, plus three successful end-to-end inputs for the reference DLL and nonblind AI-authored DLL.
+
+The experimental graph separately represents the reference and AI candidate as test-backed providers of the same capability in [CI run 38324502093](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38324502093).
+
+This confirms interoperability **only for those project-owned test contracts and observed executions**. It neither validates arbitrary Windows applications nor shows autonomous AI repair. Wine alone is not a security sandbox.
+
 ## Blinded trial proposal
 
 A proper agent evaluation should maintain separately controlled roles:
