@@ -31,6 +31,14 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [ ] Explain strategies, prerequisites, confidence and gaps
 - [ ] Keep planning deterministic and side-effect free
 
+## Controlled native fixture (pre-M3; not untrusted execution)
+- [x] Demonstrate project-owned ELF client with missing shared-library dependency
+- [x] Detect missing library, wrong symbol, and wrong behavior against an external oracle
+- [x] Run clean rebuild and connect test evidence to a graph candidate
+- [ ] Replicate on a truly independent machine or VM
+- [ ] Test AI-generated adapter with independent validation and provenance ([issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10))
+- [ ] Run a project-owned Windows PE/DLL fixture through a constrained Wine environment
+
 ## M3 — Controlled execution
 - [ ] Implement consent, isolation, resource bounds and audit records
 - [ ] Test ELF, Windows PE through Wine, and WASM executions
