@@ -1,6 +1,6 @@
 # Experiment 002 — A real missing capability (native Linux)
 
-**Status:** Controlled engineering fixture. A disclosed **nonblind AI-authored candidate** passes the ELF contract oracle. A separate trusted CI workflow now tests project-owned Windows PE execution under Wine; that run must be verified before making runtime claims.
+**Status:** Controlled engineering fixture. A disclosed **nonblind AI-authored candidate** passes the ELF contract oracle. Project-owned Windows PE execution under Wine 9.0 has also passed in CI, including the reference and nonblind AI-authored DLL.
 
 This experiment moves UOE from a fictional Capability Graph into **actual compiled and executed project-owned software**.
 
