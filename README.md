@@ -23,7 +23,9 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 - [RFC 0001 — Inspection and execution planning](docs/rfcs/0001-artifact-execution.md)
 - [RFC 0002 — Capability-centered computing (draft)](docs/rfcs/0002-capability-centered-computing.md) · [Discuss](https://github.com/Ravenmoray/universal-operating-environment/issues/7)
 - [Roadmap](ROADMAP.md)
-- [Contributing](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.md) — humans and AI agents welcome
+- [RFC process and proposal template](docs/rfcs/README.md)
+- [Open invitation to challenge UOE](https://github.com/Ravenmoray/universal-operating-environment/issues/8)
 - [Security](SECURITY.md)
 - [Instructions for AI contributors](AGENTS.md)
 
