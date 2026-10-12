@@ -144,7 +144,7 @@ def produce_graph(report: dict):
         {"id": host, "kind": "host"},
     ]
     relations = [
-        ("requires", artifact, cap, "inspection", "observed"),
+        ("requires", artifact, cap, "specification", "documented"),
         ("provides", provider, cap, "test", "tested"),
         ("available_on", provider, host, "test", "tested"),
     ]
@@ -154,7 +154,12 @@ def produce_graph(report: dict):
         ev = {
             "id": ev_id, "kind": "evidence",
             "evidence_type": evidence_type,
-            "reference": "local-fixture:sha256:" + report["first"]["provider_sha256"],
+            "reference": (
+                "repo-source:client.c;sha256:" + sha256(SRC / "client.c")
+                if relation == "requires" else
+                "local-test:verify.py;sha256:" + sha256(ROOT / "verify.py")
+                + ";provider-sha256:" + report["first"]["provider_sha256"]
+            ),
             "result": "pass" if evidence_type == "test" else "not_applicable",
             "scope": {"source": source, "relationship": relation, "target": target},
         }
