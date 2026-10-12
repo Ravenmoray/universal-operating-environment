@@ -1,0 +1,93 @@
+{
+  "schema_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "artifact:demo",
+      "kind": "artifact",
+      "label": "Hypothetical demo program"
+    },
+    {
+      "id": "capability:echo@1",
+      "kind": "capability",
+      "label": "Versioned echo interface"
+    },
+    {
+      "id": "provider:demo-adapter",
+      "kind": "provider",
+      "label": "Hypothetical demo adapter"
+    },
+    {
+      "id": "host:linux",
+      "kind": "host",
+      "label": "Illustrative Linux test host"
+    },
+    {
+      "id": "evidence:inspection1",
+      "kind": "evidence",
+      "evidence_type": "inspection",
+      "reference": "fixture:inspection",
+      "result": "not_applicable",
+      "scope": {
+        "source": "artifact:demo",
+        "relationship": "requires",
+        "target": "capability:echo@1"
+      }
+    },
+    {
+      "id": "evidence:provider-test",
+      "kind": "evidence",
+      "evidence_type": "test",
+      "reference": "fixture:test-provider",
+      "result": "pass",
+      "scope": {
+        "source": "provider:demo-adapter",
+        "relationship": "provides",
+        "target": "capability:echo@1"
+      }
+    },
+    {
+      "id": "evidence:host-test",
+      "kind": "evidence",
+      "evidence_type": "test",
+      "reference": "fixture:test-host",
+      "result": "pass",
+      "scope": {
+        "source": "provider:demo-adapter",
+        "relationship": "available_on",
+        "target": "host:linux"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:req",
+      "source": "artifact:demo",
+      "relationship": "requires",
+      "target": "capability:echo@1",
+      "status": "observed",
+      "evidence": [
+        "evidence:inspection1"
+      ]
+    },
+    {
+      "id": "edge:provides",
+      "source": "provider:demo-adapter",
+      "relationship": "provides",
+      "target": "capability:echo@1",
+      "status": "tested",
+      "evidence": [
+        "evidence:provider-test"
+      ]
+    },
+    {
+      "id": "edge:host",
+      "source": "provider:demo-adapter",
+      "relationship": "available_on",
+      "target": "host:linux",
+      "status": "tested",
+      "evidence": [
+        "evidence:host-test"
+      ]
+    }
+  ]
+}
