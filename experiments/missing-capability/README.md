@@ -1,6 +1,6 @@
 # Experiment 002 — A real missing capability (native Linux)
 
-**Status:** Controlled engineering fixture. No AI-generated repair or cross-OS compatibility yet.
+**Status:** Controlled engineering fixture. A disclosed **nonblind AI-authored candidate** passes the ELF contract oracle. A separate trusted CI workflow now tests project-owned Windows PE execution under Wine; that run must be verified before making runtime claims.
 
 This experiment moves UOE from a fictional Capability Graph into **actual compiled and executed project-owned software**.
 
@@ -39,6 +39,14 @@ The Python oracle is intentionally separate from the candidate provider source.
 | Correct provider passes contract oracle | This implementation matches listed contract vectors on this host | Arbitrary Windows/macOS software is compatible |
 | Second clean build directory passes | Results can be reproduced in a fresh directory | Independent machine replication, secure provenance, or AI repair |
 
+## AI-authored candidate: what this establishes
+
+[agent_candidate_v0.c](agent_candidate_v0.c) was drafted by ChatGPT (GPT-6) against the published UOE interface on October 12, 2026. The same reviewed, project-owned `verify.py` oracle evaluates it alongside the original reference and deliberately invalid providers.
+
+This is **not a blind autonomous repair**: the source of the reference implementation and all existing public tests were accessible to the assistant beforehand. The evaluation can establish that the candidate satisfies the current known contract vectors, including buffer capacity, maximum input size, non-ASCII bytes, and a real client call. It cannot show how well an agent handles an unfamiliar undocumented third-party program.
+
+For a meaningful blind evaluation, the agent must have access only to an explicitly scoped public contract and permitted artifacts; the test oracle and reference implementation should be withheld from the agent's accessible workspace and the results assessed independently. Even then, the evaluation needs multiple trials, a non-AI baseline, provenance, and an execution isolation design.
+
 ## Same capability, different executable formats
 
 The experiment also includes a **Windows PE32+ x86-64 client** using `LoadLibraryA` / `GetProcAddress`, built from the same interface header as the Linux ELF client. The same provider source can be built into either a Linux `.so` or a Windows `.dll` with an explicit exported symbol.
@@ -49,7 +57,7 @@ On a Linux workstation with `gcc-mingw-w64-x86-64` and `binutils-mingw-w64-x86-6
 python3 experiments/missing-capability/crosscheck_pe.py
 ```
 
-The [Windows cross-compilation workflow](../../.github/workflows/cross-compile-pe.yml) verifies PE32+ headers, x86-64 architecture, DLL flag and exported symbol. **It does not execute the Windows program**, verify runtime behavior in Wine, or claim compatibility beyond static compilation. Runtime verification must be a separate, approved experiment.
+The [Windows cross-compilation workflow](../../.github/workflows/cross-compile-pe.yml) verifies PE32+ headers, x86-64 architecture, DLL flag and exported symbol. **It does not execute the Windows program**, verify runtime behavior in Wine, or claim compatibility beyond static compilation. A separate [trusted Wine runtime workflow](../../.github/workflows/wine-fixture.yml) exercises only these project-owned binaries. Wine is a compatibility layer, **not a security sandbox**; the runtime result must be independently checked.
 
 ## Test status
 
