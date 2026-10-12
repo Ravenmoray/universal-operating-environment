@@ -6,6 +6,7 @@
 #include <windows.h>
 #include "../include/uoe_text_v1.h"
 #include <stdio.h>
+#include <string.h>
 
 int main(int argc, char **argv) {
     char result[1024];
@@ -26,8 +27,10 @@ int main(int argc, char **argv) {
         (void)FreeLibrary(handle);
         return 41;
     }
-    /* This research fixture targets the x86-64 Windows C calling convention. */
-    uoe_text_normalize_v1_fn normalize = (uoe_text_normalize_v1_fn)symbol;
+    /* x86-64 Win32 function pointer representations are the same size. */
+    uoe_text_normalize_v1_fn normalize;
+    _Static_assert(sizeof(normalize) == sizeof(symbol), "pointer ABI mismatch");
+    memcpy(&normalize, &symbol, sizeof normalize);
     int status = normalize(argv[2], result, sizeof result);
     (void)FreeLibrary(handle);
     if (status != 0) {
