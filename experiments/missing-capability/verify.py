@@ -182,17 +182,21 @@ def produce_graph(report: dict):
     host = "host:linux-fixture"
     cap = "capability:uoe.text.normalize@1"
     provider = "provider:uoe.reference-v1"
+    agent_provider = "provider:uoe.ai-candidate-v0"
     artifact = "artifact:uoe.elf-client"
     nodes = [
         {"id": artifact, "kind": "artifact"},
         {"id": cap, "kind": "capability"},
         {"id": provider, "kind": "provider"},
+        {"id": agent_provider, "kind": "provider"},
         {"id": host, "kind": "host"},
     ]
     relations = [
         ("requires", artifact, cap, "specification", "documented"),
         ("provides", provider, cap, "test", "tested"),
         ("available_on", provider, host, "test", "tested"),
+        ("provides", agent_provider, cap, "test", "tested"),
+        ("available_on", agent_provider, host, "test", "tested"),
     ]
     edges = []
     for i, (relation, source, target, evidence_type, status) in enumerate(relations):
@@ -204,7 +208,9 @@ def produce_graph(report: dict):
                 "repo-source:client.c;sha256:" + sha256(SRC / "client.c")
                 if relation == "requires" else
                 "local-test:verify.py;sha256:" + sha256(ROOT / "verify.py")
-                + ";provider-sha256:" + report["first"]["provider_sha256"]
+                + ";provider-sha256:"
+                + (report["first"]["candidate_sha256"]
+                   if source == agent_provider else report["first"]["provider_sha256"])
             ),
             "result": "pass" if evidence_type == "test" else "not_applicable",
             "scope": {"source": source, "relationship": relation, "target": target},
@@ -271,6 +277,13 @@ def main():
     expect(candidate_plan["requirements"][0]["state"] == "test_backed_candidate",
            "verified fixture not represented in graph")
     report["graph_plan_state"] = candidate_plan["requirements"][0]["state"]
+    candidates = candidate_plan["requirements"][0]["candidates"]
+    providers = sorted(c["provider"] for c in candidates)
+    expect(providers == sorted(["provider:uoe.reference-v1", "provider:uoe.ai-candidate-v0"]),
+           "graph did not preserve both independently tested provider claims")
+    expect(all(c["assessment"] == "test_backed_candidate" for c in candidates),
+           "provider verification was incorrectly downgraded")
+    report["graph_test_backed_providers"] = providers
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
