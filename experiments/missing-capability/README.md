@@ -57,7 +57,7 @@ On a Linux workstation with `gcc-mingw-w64-x86-64` and `binutils-mingw-w64-x86-6
 python3 experiments/missing-capability/crosscheck_pe.py
 ```
 
-The [Windows cross-compilation workflow](../../.github/workflows/cross-compile-pe.yml) verifies PE32+ headers, x86-64 architecture, DLL flag and exported symbol. **It does not execute the Windows program**, verify runtime behavior in Wine, or claim compatibility beyond static compilation. A separate [trusted Wine runtime workflow](../../.github/workflows/wine-fixture.yml) exercises only these project-owned binaries. Wine is a compatibility layer, **not a security sandbox**; the runtime result must be independently checked.
+The [Windows cross-compilation workflow](../../.github/workflows/cross-compile-pe.yml) verifies PE32+ headers, x86-64 architecture, DLL flag and exported symbol. **It does not execute the Windows program**, verify runtime behavior in Wine, or claim compatibility beyond static compilation. A separate [trusted Wine runtime workflow](../../.github/workflows/wine-fixture.yml) now **passes** for these project-owned binaries. The [verified run](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38324324417) used Wine 9.0 on an ephemeral Linux runner, detected a missing DLL and missing symbol, rejected a behaviorally incorrect provider, and validated three end-to-end inputs through the correct DLL **and** the disclosed, nonblind AI-authored DLL. Wine is a compatibility layer, **not a security sandbox**, and neither the native client nor this fixture exercises arbitrary third-party applications.
 
 ## Test status
 
@@ -70,7 +70,7 @@ The CI workflow is defined at [.github/workflows/missing-capability.yml](../../.
 1. Introduce an AI-generated candidate adapter under the same *independent* oracle. Compare success, mistakes and repair cost with a non-AI baseline.
 2. Collect signed attestations and source provenance; the current graph is only internally self-consistent.
 3. Reproduce on an independently provisioned Linux host.
-4. Port the same contract to a project-owned Windows PE/DLL fixture, then test it on Linux through Wine under proper isolation.
+4. Repeat the Wine test on another independently provisioned host, then evaluate how secure disposable VMs could constrain untrusted and AI-generated code. This fixture currently runs only reviewed project-owned code on a trusted, ephemeral CI runner.
 5. Compare the Capability Graph route against ordinary package/dependency resolution. If the graph brings no additional demonstrated value, simplify it.
 
 Review [RFC 0002](../../docs/rfcs/0002-capability-centered-computing.md) and [Capability Graph issue #9](https://github.com/Ravenmoray/universal-operating-environment/issues/9).
