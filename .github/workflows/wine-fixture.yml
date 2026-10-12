@@ -1,0 +1,29 @@
+name: Trusted Wine runtime experiment
+
+on:
+  push:
+    paths:
+      - "experiments/missing-capability/**"
+      - ".github/workflows/wine-fixture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run-project-owned-pe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MinGW, Wine, and headless display
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             gcc-mingw-w64-x86-64 wine wine64 xvfb xauth
+      - name: Execute reviewed UOE-owned Windows fixture under Wine
+        run: python3 experiments/missing-capability/winecheck.py
+
+# Do not trigger on pull_request. This builds and executes native machine code.
+# Wine is not a security sandbox; never feed unreviewed third-party binaries.
