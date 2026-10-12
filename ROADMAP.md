@@ -6,6 +6,7 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Create public repository
 - [x] Adopt AGPL-3.0-or-later for project-original code and documentation
 - [x] Publish charter, architecture draft and RFC 0001
+- [x] Publish [draft RFC 0002](docs/rfcs/0002-capability-centered-computing.md) for public discussion
 - [ ] Review and refine threat model
 - [ ] Agree contributor governance
 - [ ] Enable private vulnerability reporting and CI
