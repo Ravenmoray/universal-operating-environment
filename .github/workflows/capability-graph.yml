@@ -1,0 +1,39 @@
+name: Capability Graph research tests
+on:
+  push:
+    paths:
+      - "experiments/capability-graph/**"
+      - ".github/workflows/capability-graph.yml"
+  pull_request:
+    paths:
+      - "experiments/capability-graph/**"
+      - ".github/workflows/capability-graph.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-research-prototype:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install schema validation dependency (tests only)
+        run: python -m pip install "jsonschema==4.26.0"
+      - name: Run negative and deterministic tests
+        env:
+          PYTHONPATH: experiments/capability-graph
+        run: python -m unittest discover -s experiments/capability-graph/tests -v
+      - name: Validate fixture
+        env:
+          PYTHONPATH: experiments/capability-graph
+        run: python -m uoe_graph validate experiments/capability-graph/fixtures/demo.json
+      - name: Propose candidates without execution
+        env:
+          PYTHONPATH: experiments/capability-graph
+        run: |
+          python -m uoe_graph plan experiments/capability-graph/fixtures/demo.json --artifact artifact:demo --host host:linux > /tmp/uoe-static-plan.json
+          python -c 'import json; x=json.load(open("/tmp/uoe-static-plan.json")); assert x["requirements"][0]["state"] == "test_backed_candidate"'
