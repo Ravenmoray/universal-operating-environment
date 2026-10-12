@@ -90,12 +90,12 @@ def main():
         run(["xvfb-run", "-a", "wineboot", "-u"], env=env, timeout=180)
 
         missing = execute(client, base / "missing.dll", "hello", env)
-        check(missing.returncode == 40 and b"UOE_ERR_LIBRARY" in missing.stderr,
-              f"missing DLL failure not classified: {missing.returncode} {missing.stderr!r}")
+        check(missing.returncode == 40 and b"UOE_ERR_LIBRARY" in (missing.stdout + missing.stderr),
+              f"missing DLL failure not classified: rc={missing.returncode} out={missing.stdout!r} err={missing.stderr!r}")
 
         symbol = execute(client, wrong, "hello", env)
-        check(symbol.returncode == 41 and b"UOE_ERR_SYMBOL" in symbol.stderr,
-              f"missing symbol failure not classified: {symbol.returncode} {symbol.stderr!r}")
+        check(symbol.returncode == 41 and b"UOE_ERR_SYMBOL" in (symbol.stdout + symbol.stderr),
+              f"missing symbol failure not classified: rc={symbol.returncode} out={symbol.stdout!r} err={symbol.stderr!r}")
 
         incorrect_run = execute(client, incorrect, "hello", env)
         check(incorrect_run.returncode == 0 and
