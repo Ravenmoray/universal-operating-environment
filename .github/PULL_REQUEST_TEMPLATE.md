@@ -4,7 +4,7 @@ What changes, and why?
 
 ## Related issue / RFC
 
-Link any issue, accepted decision, or draft RFC. For new architecture, see [the RFC process](../docs/rfcs/README.md).
+Link any issue, accepted decision, or draft RFC. For new architecture, see [the RFC process](https://github.com/Ravenmoray/universal-operating-environment/blob/main/docs/rfcs/README.md).
 
 ## Evidence and validation
 
