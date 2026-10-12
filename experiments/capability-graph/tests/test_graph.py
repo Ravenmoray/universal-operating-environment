@@ -115,6 +115,27 @@ class CapabilityGraphTests(unittest.TestCase):
         jsonschema.Draft202012Validator.check_schema(schema)
         jsonschema.validate(self.graph, schema)
 
+    def test_malformed_field_types_fail_cleanly(self):
+        mutations = [
+            lambda g: g["nodes"][0].update(kind=[]),
+            lambda g: g["edges"][0].update(relationship=[]),
+            lambda g: g["edges"][0].update(status=[]),
+            lambda g: g["edges"][0].update(source=[]),
+            lambda g: g["nodes"][-1]["scope"].update(relationship=[]),
+        ]
+        for i, mutate in enumerate(mutations):
+            with self.subTest(case=i):
+                graph = copy.deepcopy(self.graph)
+                mutate(graph)
+                with self.assertRaises(GraphError):
+                    validate(graph)
+
+    def test_nonstring_plan_identifiers_fail_cleanly(self):
+        with self.assertRaises(GraphError):
+            plan(self.graph, [], "host:linux")
+        with self.assertRaises(GraphError):
+            plan(self.graph, "artifact:demo", [])
+
     def test_malformed_identity_is_rejected(self):
         graph = copy.deepcopy(self.graph)
         graph["nodes"][0]["id"] = ""
