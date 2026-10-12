@@ -1,0 +1,27 @@
+name: Cross-compile Windows PE fixture
+
+on:
+  push:
+    paths:
+      - "experiments/missing-capability/**"
+      - ".github/workflows/cross-compile-pe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-pe-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install x86-64 Windows cross compiler and binutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+      - name: Build and statically verify PE32+ executable and DLL
+        run: python3 experiments/missing-capability/crosscheck_pe.py
+      - name: Explicit scope of this check
+        run: echo "Compilation and PE header/symbol validation only; nothing was executed through Wine or Windows."
