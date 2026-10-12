@@ -41,7 +41,8 @@ def build(output: Path, source: str, shared=False):
     args = [COMPILER, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
     if shared:
         args += ["-shared"]
-    args += [str(SRC / source), "-o", str(output)]
+    source_file = source if isinstance(source, Path) else SRC / source
+    args += [str(source_file), "-o", str(output)]
     run(args)
 
 
@@ -71,10 +72,12 @@ def main():
         good = base / "good.dll"
         incorrect = base / "incorrect.dll"
         wrong = base / "wrong.dll"
+        agent = base / "agent_candidate_v0.dll"
         build(client, "windows_client.c")
         build(good, "reference_provider.c", shared=True)
         build(incorrect, "incorrect_provider.c", shared=True)
         build(wrong, "wrong_symbol_provider.c", shared=True)
+        build(agent, ROOT / "agent_candidate_v0.c", shared=True)
 
         env = os.environ.copy()
         env.update({
@@ -107,12 +110,21 @@ def main():
             check(result.returncode == 0 and result.stdout.strip() == expected,
                   f"Wine execution failed for {source!r}: rc={result.returncode}"
                   f" stdout={result.stdout!r} stderr={result.stderr!r}")
+        for source, expected in vectors:
+            candidate_run = execute(client, agent, source, env)
+            check(candidate_run.returncode == 0
+                  and candidate_run.stdout.strip() == expected,
+                  f"AI-authored candidate failed Wine execution for {source!r}: "
+                  f"rc={candidate_run.returncode} "
+                  f"stdout={candidate_run.stdout!r} stderr={candidate_run.stderr!r}")
         report = {
             "experiment": "project-owned-windows-pe-under-wine",
             "status": "passed",
             "runtime": run(["wine", "--version"]).strip(),
             "client_sha256": sha256(client),
             "dll_sha256": sha256(good),
+            "agent_candidate_dll_sha256": sha256(agent),
+            "ai_assisted_nonblind_candidate_vectors": len(vectors),
             "missing_library_exit": missing.returncode,
             "missing_symbol_exit": symbol.returncode,
             "incorrect_provider_rejected": True,
