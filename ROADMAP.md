@@ -37,7 +37,8 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Run clean rebuild and connect test evidence to a graph candidate
 - [x] Cross-compile project-owned Windows PE executable/DLL from the same C interface contract; static format/export validation only
 - [ ] Replicate on a truly independent machine or VM
-- [ ] Test AI-generated adapter with independent validation and provenance ([issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10))
+- [x] Evaluate a disclosed **nonblind** [AI-authored adapter](experiments/missing-capability/agent_candidate_v0.c) under the existing oracle (17 assertions per clean build)
+- [ ] Test a **blinded** AI-generated adapter with separately controlled validation, repeated trials, independent host and provenance ([issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10))
 - [ ] Run a project-owned Windows PE/DLL fixture through a constrained Wine environment
 
 ## M3 — Controlled execution
