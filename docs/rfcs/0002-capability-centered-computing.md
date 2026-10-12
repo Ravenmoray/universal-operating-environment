@@ -1,6 +1,7 @@
 # RFC 0002 — Capability-Centered Computing: Rethinking the Operating Environment
 
 **Status:** Draft — public discussion, not an accepted architecture  
+**Discussion:** [GitHub issue #7](https://github.com/Ravenmoray/universal-operating-environment/issues/7)  
 **Date:** 2026-10-12  
 **Authors:** UOE project discussion  
 **Scope:** Architectural direction and a falsifiable research program  
