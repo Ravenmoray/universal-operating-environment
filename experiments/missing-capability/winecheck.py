@@ -53,7 +53,7 @@ def winepath(file: Path, env):
 
 
 def execute(exe: Path, dll: Path, text: str, env):
-    command = ["xvfb-run", "-a", "wine", str(exe), winepath(dll, env), text]
+    command = ["wine", str(exe), winepath(dll, env), text]
     return subprocess.run(command, env=env, capture_output=True,
                           timeout=120, check=False)
 
@@ -63,7 +63,7 @@ def sha256(path: Path):
 
 
 def main():
-    for exe in [COMPILER, "wine", "winepath", "xvfb-run"]:
+    for exe in [COMPILER, "wine", "winepath", "wineboot"]:
         check(shutil.which(exe) is not None, "required tool is missing: " + exe)
 
     with tempfile.TemporaryDirectory(prefix="uoe-wine-fixture-") as tmp:
@@ -87,7 +87,7 @@ def main():
             "WINEDLLOVERRIDES": "mscoree,mshtml=",
         })
         # Initialize this disposable Wine prefix before measurements.
-        run(["xvfb-run", "-a", "wineboot", "-u"], env=env, timeout=180)
+        run(["wineboot", "-u"], env=env, timeout=180)
 
         missing = execute(client, base / "missing.dll", "hello", env)
         check(missing.returncode == 40 and b"UOE_ERR_LIBRARY" in (missing.stdout + missing.stderr),
