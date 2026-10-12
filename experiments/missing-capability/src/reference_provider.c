@@ -4,7 +4,7 @@
 #include "../include/uoe_text_v1.h"
 #include <string.h>
 
-int uoe_text_normalize_v1(const char *input, char *output, size_t capacity) {
+UOE_EXPORT int uoe_text_normalize_v1(const char *input, char *output, size_t capacity) {
     if (input == NULL || output == NULL) return -1;
     size_t length = strlen(input);
     if (length > UOE_TEXT_V1_MAX_INPUT) return -3;
