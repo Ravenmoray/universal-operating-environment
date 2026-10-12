@@ -23,7 +23,7 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             gcc-mingw-w64-x86-64 wine wine64 xvfb xauth
       - name: Execute reviewed UOE-owned Windows fixture under Wine
-        run: python3 experiments/missing-capability/winecheck.py
+        run: xvfb-run -a python3 experiments/missing-capability/winecheck.py
 
 # Do not trigger on pull_request. This builds and executes native machine code.
 # Wine is not a security sandbox; never feed unreviewed third-party binaries.
