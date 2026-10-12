@@ -6,6 +6,13 @@
 #define UOE_TEXT_V1_H
 #include <stddef.h>
 
+/* Export the same ABI symbol from a Windows DLL or a Linux shared object. */
+#ifdef _WIN32
+#define UOE_EXPORT __declspec(dllexport)
+#else
+#define UOE_EXPORT
+#endif
+
 /*
  * Exported symbol: uoe_text_normalize_v1
  *
