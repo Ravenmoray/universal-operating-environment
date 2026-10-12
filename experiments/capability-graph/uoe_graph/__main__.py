@@ -55,7 +55,7 @@ def validate(graph):
         if not isinstance(node, dict):
             _fail("node must be an object")
         ident, kind = node.get("id"), node.get("kind")
-        if not _nonempty(ident) or kind not in NODE_KINDS:
+        if not _nonempty(ident) or not isinstance(kind, str) or kind not in NODE_KINDS:
             _fail("invalid node identity or kind")
         if ident in nodes:
             _fail("duplicate node ID: " + ident)
@@ -64,14 +64,16 @@ def validate(graph):
         if kind == "evidence":
             if set(node) - {"id", "kind", "label", "evidence_type", "reference", "result", "scope"}:
                 _fail("unknown evidence field")
-            if node.get("evidence_type") not in EVIDENCE_TYPES:
+            if not isinstance(node.get("evidence_type"), str) or node["evidence_type"] not in EVIDENCE_TYPES:
                 _fail("invalid evidence type")
-            if node.get("result") not in RESULTS or not _nonempty(node.get("reference")):
+            if (not isinstance(node.get("result"), str) or node["result"] not in RESULTS
+                    or not _nonempty(node.get("reference"))):
                 _fail("invalid evidence result/reference")
             scope = node.get("scope")
             if not isinstance(scope, dict) or set(scope) != {"source", "relationship", "target"}:
                 _fail("invalid evidence scope")
             if (not _nonempty(scope["source"]) or not _nonempty(scope["target"])
+                    or not isinstance(scope["relationship"], str)
                     or scope["relationship"] not in RELATIONS):
                 _fail("invalid evidence scope triple")
         elif set(node) - {"id", "kind", "label"}:
@@ -89,10 +91,11 @@ def validate(graph):
             _fail("duplicate or invalid edge ID")
         edges_seen.add(ident)
         relationship = edge["relationship"]
-        if relationship not in RELATIONS or edge["status"] not in STATUSES:
+        if (not isinstance(relationship, str) or relationship not in RELATIONS
+                or not isinstance(edge["status"], str) or edge["status"] not in STATUSES):
             _fail("invalid edge relation/status")
         source, target = edge["source"], edge["target"]
-        if source not in nodes or target not in nodes:
+        if not _nonempty(source) or not _nonempty(target) or source not in nodes or target not in nodes:
             _fail("dangling edge")
         wanted_source, wanted_target = RELATIONS[relationship]
         if nodes[source]["kind"] != wanted_source or nodes[target]["kind"] != wanted_target:
@@ -119,9 +122,9 @@ def validate(graph):
 def plan(graph, artifact_id, host_id):
     """Return static candidates, never execution permission or compatibility proof."""
     nodes = validate(graph)
-    if nodes.get(artifact_id, {}).get("kind") != "artifact":
+    if not _nonempty(artifact_id) or nodes.get(artifact_id, {}).get("kind") != "artifact":
         _fail("unknown artifact")
-    if nodes.get(host_id, {}).get("kind") != "host":
+    if not _nonempty(host_id) or nodes.get(host_id, {}).get("kind") != "host":
         _fail("unknown host")
 
     edges = graph["edges"]
