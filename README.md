@@ -22,6 +22,8 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 - [Architecture overview](docs/architecture/overview.md)
 - [RFC 0001 — Inspection and execution planning](docs/rfcs/0001-artifact-execution.md)
 - [RFC 0002 — Capability-centered computing (draft)](docs/rfcs/0002-capability-centered-computing.md) · [Discuss](https://github.com/Ravenmoray/universal-operating-environment/issues/7)
+- [Capability Graph model (draft proposal)](docs/rfcs/proposals/minimal-capability-graph.md) · [Research issue #9](https://github.com/Ravenmoray/universal-operating-environment/issues/9)
+- [Capability Graph read-only experiment](experiments/capability-graph/README.md) · [Evidence and testing guide](docs/research/evidence-and-testing.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md) — humans and AI agents welcome
 - [RFC process and proposal template](docs/rfcs/README.md)
