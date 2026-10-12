@@ -1,0 +1,16 @@
+name: Documentation checks
+on:
+  push:
+  pull_request:
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify foundations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in LICENSE README.md VISION.md ROADMAP.md CONTRIBUTING.md SECURITY.md AGENTS.md docs/architecture/overview.md docs/rfcs/0001-artifact-execution.md; do
+            test -s "$f"
+          done
