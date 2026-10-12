@@ -19,6 +19,12 @@ All milestones are research goals; no feature is complete until demonstrated and
 
 **Success criterion:** reproducible reports for representative benign files, without executing those files.
 
+## Capability Graph research (parallel, not a production milestone)
+- [x] Publish [minimal graph proposal](docs/rfcs/proposals/minimal-capability-graph.md) for review
+- [x] Implement a [read-only evidence-bound planning experiment](experiments/capability-graph/README.md) with negative tests and CI
+- [ ] Compare the experiment against CycloneDX/SPDX or a simple dependency baseline
+- [ ] Design independently authenticated evidence and real behavioral integration tests
+
 ## M2 — Execution planning
 - [ ] Define runner-adapter interface and host capability model
 - [ ] Evaluate native Linux, Wine and Wasmtime options
