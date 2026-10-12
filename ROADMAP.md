@@ -39,7 +39,8 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [ ] Replicate on a truly independent machine or VM
 - [x] Evaluate a disclosed **nonblind** [AI-authored adapter](experiments/missing-capability/agent_candidate_v0.c) under the existing oracle (17 assertions per clean build)
 - [ ] Test a **blinded** AI-generated adapter with separately controlled validation, repeated trials, independent host and provenance ([issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10))
-- [ ] Run a project-owned Windows PE/DLL fixture through a constrained Wine environment
+- [x] Execute project-owned Windows PE/DLL fixtures under Wine 9.0 on a trusted ephemeral Linux CI runner; verify missing DLL, absent export, incorrect behavior, correct reference and nonblind AI candidate ([run 38324324417](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38324324417))
+- [ ] Design isolated, permissioned execution for genuinely untrusted artifacts (Wine alone is not a security boundary)
 
 ## M3 — Controlled execution
 - [ ] Implement consent, isolation, resource bounds and audit records
