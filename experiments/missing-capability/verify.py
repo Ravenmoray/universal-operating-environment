@@ -20,6 +20,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
+# Fixed, reviewed source file: do not treat input paths as trusted executable code.
+AI_CANDIDATE = ROOT / "agent_candidate_v0.c"
 PREFIX = b"UOE/1:"
 VECTORS = [
     (b"", PREFIX),
@@ -40,7 +42,8 @@ def compile_fixture(output: Path, source: str, shared=False):
     args = [compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
     if shared:
         args += ["-fPIC", "-shared"]
-    args += [str(SRC / source), "-o", str(output)]
+    source_file = source if isinstance(source, Path) else SRC / source
+    args += [str(source_file), "-o", str(output)]
     if not shared:
         args += ["-ldl"]
     subprocess.run(args, check=True, capture_output=True, text=True, timeout=30)
@@ -83,6 +86,35 @@ def direct_contract_tests(provider: Path):
            "NULL input accepted")
     expect(call(b"hello", None, 32) == -1, "NULL output accepted")
     count += 2
+
+    # Boundary behavior and output immutability are the main differentiators
+    # between a working adapter and one that merely loads successfully.
+    boundary_input = b"a" * 512
+    exact_capacity = len(PREFIX) + len(boundary_input) + 1
+    exactly_sized = ctypes.create_string_buffer(exact_capacity)
+    expect(call(boundary_input, exactly_sized, exact_capacity) == 0
+           and exactly_sized.value == PREFIX + b"A" * 512,
+           "maximum accepted input or exact output capacity failed")
+    count += 1
+
+    too_small = ctypes.create_string_buffer(b"untouched", exact_capacity - 1)
+    prior = too_small.raw
+    expect(call(boundary_input, too_small, exact_capacity - 1) == -2
+           and too_small.raw == prior,
+           "one-byte-short output buffer was modified")
+    count += 1
+
+    # Test the entire 1..127 non-NUL ASCII byte range; avoid output NUL, which
+    # is a C-string terminator. 128..255 are also meaningful as raw bytes.
+    byte_input = bytes(range(1, 256))
+    expected = PREFIX + bytes(
+        code - 32 if 97 <= code <= 122 else code for code in byte_input
+    )
+    all_bytes = ctypes.create_string_buffer(1024)
+    expect(call(byte_input, all_bytes, ctypes.sizeof(all_bytes)) == 0
+           and all_bytes.value == expected,
+           "non-ASCII bytes were unexpectedly changed")
+    count += 1
     return count
 
 
@@ -96,10 +128,12 @@ def run_round(directory: Path):
     good = directory / "libuoe_text_v1.so"
     wrong = directory / "libwrong_symbol.so"
     incorrect = directory / "libincorrect.so"
+    agent = directory / "libagent_candidate_v0.so"
     compile_fixture(client, "client.c")
     compile_fixture(good, "reference_provider.c", shared=True)
     compile_fixture(wrong, "wrong_symbol_provider.c", shared=True)
     compile_fixture(incorrect, "incorrect_provider.c", shared=True)
+    compile_fixture(agent, AI_CANDIDATE, shared=True)
 
     missing = call_client(client, directory / "missing.so", b"hello")
     expect(missing.returncode == 40 and b"UOE_ERR_LIBRARY" in missing.stderr,
@@ -116,14 +150,26 @@ def run_round(directory: Path):
            "incorrect implementation was not detected by the oracle")
 
     count = direct_contract_tests(good)
+    candidate_count = direct_contract_tests(agent)
+    expect(candidate_count == count,
+           "candidate did not pass the complete independent oracle")
     for source, expected in VECTORS:
         run = call_client(client, good, source)
         expect(run.returncode == 0 and run.stdout.rstrip(b"\n") == expected,
                "client + provider behavior failed for " + repr(source))
         count += 1
+    for source, expected in VECTORS:
+        trial = call_client(client, agent, source)
+        expect(trial.returncode == 0
+               and trial.stdout.rstrip(b"\n") == expected,
+               "candidate failed end-to-end client behavior for " + repr(source))
+        candidate_count += 1
     return {
         "client_sha256": sha256(client),
         "provider_sha256": sha256(good),
+        "candidate_sha256": sha256(agent),
+        "agent_candidate_contract_assertions": candidate_count,
+        "candidate_matches_oracle": True,
         "missing_library_exit": missing.returncode,
         "missing_symbol_exit": absent_symbol.returncode,
         "incorrect_provider_rejected": True,
@@ -195,7 +241,9 @@ def main():
             "contract_assertions": second["contract_assertions"],
         },
         "limits": [
-            "No AI produced the provider; it is a known reference implementation.",
+            "The reference provider is human-readable project code, not AI-generated.",
+            "AI candidate was authored with public reference and test harness available; NOT blinded.",
+            "This is an AI-assisted implementation test, not autonomous tool discovery or repair.",
             "Independent rebuild directories are not independent machines.",
             "No Windows/macOS compatibility or universal execution is shown.",
             "Running this fixture is not a sandbox for untrusted code.",
@@ -203,6 +251,17 @@ def main():
         ],
     }
     expect(report["clean_rebuild"]["same_test_count"], "rebuild assertion mismatch")
+    expect(first["agent_candidate_contract_assertions"] == second["agent_candidate_contract_assertions"],
+           "candidate contract count changed between builds")
+    report["ai_candidate"] = {
+        "author": "ChatGPT GPT-6 (AI-assisted, nonblind)",
+        "source": "experiments/missing-capability/agent_candidate_v0.c",
+        "source_sha256": sha256(AI_CANDIDATE),
+        "passed_on_both_clean_builds": True,
+        "tested_assertions_per_build": first["agent_candidate_contract_assertions"],
+        "reference_source_existed_and_was_available": True,
+        "evaluation_role": "demonstrate candidate evaluation process, not autonomous repair",
+    }
     graph = produce_graph(report)
     graph_root = ROOT.parent / "capability-graph"
     sys.path.insert(0, str(graph_root))
