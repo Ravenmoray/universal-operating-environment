@@ -1,0 +1,9 @@
+target/
+__pycache__/
+.venv/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.pyc
+*.log
