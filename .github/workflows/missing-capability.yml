@@ -6,11 +6,6 @@ on:
       - "experiments/missing-capability/**"
       - "experiments/capability-graph/uoe_graph/**"
       - ".github/workflows/missing-capability.yml"
-  pull_request:
-    paths:
-      - "experiments/missing-capability/**"
-      - "experiments/capability-graph/uoe_graph/**"
-      - ".github/workflows/missing-capability.yml"
   workflow_dispatch:
 
 permissions:
@@ -20,7 +15,11 @@ jobs:
   verify-controlled-fixture:
     runs-on: ubuntu-latest
     steps:
+      # Execution of native code is restricted to maintainer-initiated runs.
+      # Do not run arbitrary contributor C fixtures on untrusted pull requests.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
