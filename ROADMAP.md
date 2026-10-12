@@ -35,6 +35,7 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Demonstrate project-owned ELF client with missing shared-library dependency
 - [x] Detect missing library, wrong symbol, and wrong behavior against an external oracle
 - [x] Run clean rebuild and connect test evidence to a graph candidate
+- [x] Cross-compile project-owned Windows PE executable/DLL from the same C interface contract; static format/export validation only
 - [ ] Replicate on a truly independent machine or VM
 - [ ] Test AI-generated adapter with independent validation and provenance ([issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10))
 - [ ] Run a project-owned Windows PE/DLL fixture through a constrained Wine environment
