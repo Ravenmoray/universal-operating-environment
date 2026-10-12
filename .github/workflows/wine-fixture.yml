@@ -3,7 +3,10 @@ name: Trusted Wine runtime experiment
 on:
   push:
     paths:
-      - "experiments/missing-capability/**"
+      - "experiments/missing-capability/src/**"
+      - "experiments/missing-capability/include/**"
+      - "experiments/missing-capability/agent_candidate_v0.c"
+      - "experiments/missing-capability/winecheck.py"
       - ".github/workflows/wine-fixture.yml"
   workflow_dispatch:
 
