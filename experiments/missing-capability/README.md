@@ -39,6 +39,18 @@ The Python oracle is intentionally separate from the candidate provider source.
 | Correct provider passes contract oracle | This implementation matches listed contract vectors on this host | Arbitrary Windows/macOS software is compatible |
 | Second clean build directory passes | Results can be reproduced in a fresh directory | Independent machine replication, secure provenance, or AI repair |
 
+## Same capability, different executable formats
+
+The experiment also includes a **Windows PE32+ x86-64 client** using `LoadLibraryA` / `GetProcAddress`, built from the same interface header as the Linux ELF client. The same provider source can be built into either a Linux `.so` or a Windows `.dll` with an explicit exported symbol.
+
+On a Linux workstation with `gcc-mingw-w64-x86-64` and `binutils-mingw-w64-x86-64` installed:
+
+```sh
+python3 experiments/missing-capability/crosscheck_pe.py
+```
+
+The [Windows cross-compilation workflow](../../.github/workflows/cross-compile-pe.yml) verifies PE32+ headers, x86-64 architecture, DLL flag and exported symbol. **It does not execute the Windows program**, verify runtime behavior in Wine, or claim compatibility beyond static compilation. Runtime verification must be a separate, approved experiment.
+
 ## Test status
 
 The CI workflow is defined at [.github/workflows/missing-capability.yml](../../.github/workflows/missing-capability.yml). It runs on trusted pushes and maintainer-initiated manual runs only, **not on untrusted pull requests**, because it compiles and executes C source. The report includes exact compiled binary hashes, a host description, failures, bounded test counts and explicit limitations.
