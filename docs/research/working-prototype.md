@@ -1,4 +1,37 @@
-# UOE v0.1 — Working CLI Vertical Slice
+# UOE Experimental CLI — v0.1 to v0.2
+
+## New in v0.2 — Digest-bound capability planning
+
+The v0.2 branch adds a **caller-declared** requirements document, a read-only graph validation and planning library, and a verifiable SHA-256 binding to the selected file. Both the executable and declarations must match byte-for-byte. The graph validates relations and claims of passing tests **internally**; it does not authenticate their real-world origin.
+
+From a trusted Linux repository checkout with a C compiler:
+
+```sh
+python3 -m uoe demo --execute-reviewed-fixture --export-dir /tmp/uoe-v02-example
+python3 -m uoe plan /tmp/uoe-v02-example/uoe-demo-client \
+  --claims /tmp/uoe-v02-example/claims.json \
+  --graph /tmp/uoe-v02-example/graph.json \
+  --host-id host:linux-fixture
+```
+
+The `demo` command refuses an already existing export directory to avoid overwriting files. It builds **only project-owned reviewed C source**, then exports the built ELF plus the generated declaration/graph. Re-run from a different export path on subsequent attempts.
+
+The second command is entirely **read-only**. It returns the original generic runner proposal plus a `capability_graph` section identifying the exact declared capability, matched graph edges, evidence references and two separately test-backed candidates (reference and disclosed nonblind AI-authored adapter).
+
+Important distinctions:
+
+- The executable digest is verified locally, but the declaration was made by the demo itself. This does **not** demonstrate automated extraction of a dependency.
+- The host ID is selected by the caller and **not attested** as the real physical machine.
+- Graph evidence of successful tests is taken from the supplied JSON. It is **not** cryptographically signed or independently authenticated.
+- `test_backed_candidate` means internal evidence consistency, **not** authorized execution, safety or general compatibility.
+- Changing the executable invalidates the claims, even if the file retains the same name.
+
+Verification: [v0.2 CI run 38395865631](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38395865631) passed 41 unit tests and a separately executed review-only demo/claims round trip.
+
+See the [evidence-gated path to v1](../roadmap/v1-delivery-plan.md) and [implementation issue #12](https://github.com/Ravenmoray/universal-operating-environment/issues/12).
+
+---
+## Original v0.1 vertical slice
 
 **Status: experimental.** This is a usable command-line program, not an operating system, universal compatibility layer, or sandbox. It has no third-party Python runtime dependencies.
 
