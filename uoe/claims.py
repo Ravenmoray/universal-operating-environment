@@ -15,7 +15,9 @@ CLAIMS_VERSION = "uoe.claims.v0.2"
 VALID_REQUIREMENT_STATES = {"documented", "observed", "inferred"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MAX_CLAIMS_BYTES = 1_000_000
-MAX_REQUIREMENTS = 2000
+MAX_REQUIREMENTS = 64
+MAX_GRAPH_NODES = 512
+MAX_GRAPH_EDGES = 256
 
 
 class ClaimError(ValueError):
@@ -91,6 +93,11 @@ def plan_capabilities(inspection: dict, claims: dict, graph: dict,
     if not _nonempty(host_id):
         _fail("host_id is required")
     validate_graph(graph)
+    # v0.2 deliberately limits in-memory untrusted graph size; this is not
+    # a substitute for a dedicated isolated parser or a scalability review.
+    if (len(graph["nodes"]) > MAX_GRAPH_NODES or
+            len(graph["edges"]) > MAX_GRAPH_EDGES):
+        _fail("experimental graph exceeds v0.2 planning limits")
 
     artifact = claims["artifact_id"]
     nodes = {n["id"]: n for n in graph["nodes"]}
@@ -104,6 +111,7 @@ def plan_capabilities(inspection: dict, claims: dict, graph: dict,
         and edge["status"] != "rejected"
     ]
     graph_edges_by_id = {edge["id"]: edge for edge in graph_edges}
+    all_edges_by_id = {edge["id"]: edge for edge in graph["edges"]}
     if len({edge["target"] for edge in graph_edges}) != len(graph_edges):
         _fail("graph contains ambiguous duplicate capability requirements")
 
@@ -128,10 +136,7 @@ def plan_capabilities(inspection: dict, claims: dict, graph: dict,
         result = by_cap[row["capability"]]
         candidates = []
         for candidate in result["candidates"]:
-            supporting_edges = [
-                e for e in graph["edges"]
-                if e["id"] in candidate["evidence_edges"]
-            ]
+            supporting_edges = [all_edges_by_id[eid] for eid in candidate["evidence_edges"]]
             candidates.append({
                 **candidate,
                 "edge_evidence": [
