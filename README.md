@@ -24,7 +24,8 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 - [RFC 0002 — Capability-centered computing (draft)](docs/rfcs/0002-capability-centered-computing.md) · [Discuss](https://github.com/Ravenmoray/universal-operating-environment/issues/7)
 - [Capability Graph model (draft proposal)](docs/rfcs/proposals/minimal-capability-graph.md) · [Research issue #9](https://github.com/Ravenmoray/universal-operating-environment/issues/9)
 - [Capability Graph read-only experiment](experiments/capability-graph/README.md) · [Evidence and testing guide](docs/research/evidence-and-testing.md)
-- [Working UOE CLI prototype](docs/research/working-prototype.md) — `python3 -m uoe inspect`, `plan`, and explicit controlled `demo`
+- [Working UOE CLI prototype, including v0.2 digest-bound capability planning](docs/research/working-prototype.md) — `inspect`, `plan`, and explicit controlled `demo`
+- [Evidence-gated delivery plan from v0.2 to v1.0](docs/roadmap/v1-delivery-plan.md)
 - [Experiment 002 — Missing capability: ELF execution, PE compilation, and controlled Wine research](experiments/missing-capability/README.md) · [AI evaluation methodology](docs/research/003-ai-adapter-evaluation.md) · [Follow-up issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md) — humans and AI agents welcome
