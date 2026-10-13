@@ -9,6 +9,8 @@ import sys
 import tempfile
 
 from .inspector import InspectionError, inspect_file
+from .claims import load_claims, plan_capabilities
+from .graph import load_graph
 from .planner import plan_inspection
 
 
@@ -69,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
     inspect_cmd.add_argument("artifact", type=Path)
     plan_cmd = commands.add_parser("plan", help="Explain potential runners; never run software")
     plan_cmd.add_argument("artifact", type=Path)
+    plan_cmd.add_argument("--claims", type=Path,
+                          help="Digest-pinned JSON requirement declarations")
+    plan_cmd.add_argument("--graph", type=Path,
+                          help="Evidence graph JSON for requirement/provider joins")
+    plan_cmd.add_argument("--host-id",
+                          help="Explicit host node ID inside supplied graph (unattested)")
     demo_cmd = commands.add_parser(
         "demo", help="Explicit, reviewed repository-owned Linux execution experiment"
     )
@@ -82,7 +90,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "inspect":
             result = inspect_file(args.artifact)
         elif args.command == "plan":
-            result = plan_inspection(inspect_file(args.artifact))
+            scan = inspect_file(args.artifact)
+            result = plan_inspection(scan)
+            graph_inputs = (args.claims, args.graph, args.host_id)
+            if any(value is not None for value in graph_inputs):
+                if not all(value is not None for value in graph_inputs):
+                    parser.error("capability planning requires --claims, --graph and --host-id together")
+                graph = load_graph(args.graph)
+                claims = load_claims(args.claims, scan["artifact"]["sha256"])
+                result["capability_graph"] = plan_capabilities(
+                    scan, claims, graph, args.host_id
+                )
         elif args.command == "demo":
             if not args.execute_reviewed_fixture:
                 parser.error("demo executes local code; specify --execute-reviewed-fixture")
