@@ -5,14 +5,17 @@ on:
     branches:
       - main
       - prototype/portable-cli-v0
+      - prototype/capability-claims-v0.2
     paths:
       - "uoe/**"
       - "tests/test_uoe_cli.py"
+      - "tests/test_claims.py"
       - ".github/workflows/uoe-prototype.yml"
   pull_request:
     paths:
       - "uoe/**"
       - "tests/test_uoe_cli.py"
+      - "tests/test_claims.py"
       - ".github/workflows/uoe-prototype.yml"
   workflow_dispatch:
 
@@ -31,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test inspect and plan without running supplied artifacts
-        run: python3 -m unittest discover -s tests -p 'test_uoe_cli.py' -v
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Check CLI help
         run: python3 -m uoe --help
 
