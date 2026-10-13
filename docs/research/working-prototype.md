@@ -23,6 +23,7 @@ Important distinctions:
 - The executable digest is verified locally, but the declaration was made by the demo itself. This does **not** demonstrate automated extraction of a dependency.
 - The host ID is selected by the caller and **not attested** as the real physical machine.
 - Graph evidence of successful tests is taken from the supplied JSON. It is **not** cryptographically signed or independently authenticated.
+- For deliberate v0.2 resource bounds, capability planning accepts at most **64 declared requirements, 512 graph nodes, and 256 graph edges**. These research limits will be reconsidered with indexed queries and fuzz testing.
 - `test_backed_candidate` means internal evidence consistency, **not** authorized execution, safety or general compatibility.
 - Changing the executable invalidates the claims, even if the file retains the same name.
 
