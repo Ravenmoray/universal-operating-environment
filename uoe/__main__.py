@@ -39,8 +39,9 @@ def _demo():
             raise InspectionError("demo compiler failed: " + compiler.stderr[-2000:])
         scan = inspect_file(output)
         proposed = plan_inspection(scan)
+        graph_path = Path(tmp) / "controlled-graph.json"
         verified = subprocess.run(
-            [sys.executable, str(harness)],
+            [sys.executable, str(harness), "--graph-output", str(graph_path)],
             capture_output=True, text=True, timeout=120, check=False
         )
         if verified.returncode:
@@ -50,10 +51,33 @@ def _demo():
         outcome = json.loads(verified.stdout)
         if outcome.get("status") != "passed":
             raise InspectionError("fixture report does not show passing tests")
+        graph = load_graph(graph_path)
+        # This declaration is explicitly fixture-specific; it is not an
+        # independent inspection of native imports or a signed attestation.
+        claims = {
+            "schema_version": "uoe.claims.v0.2",
+            "artifact_id": "artifact:uoe.elf-client",
+            "artifact_sha256": scan["artifact"]["sha256"],
+            "provenance": {
+                "kind": "source_document",
+                "reference": "UOE reviewed fixture: include/uoe_text_v1.h",
+            },
+            "requirements": [{
+                "capability": "capability:uoe.text.normalize@1",
+                "requirement_edge": "edge:fixture-0",
+                "status": "documented",
+            }],
+        }
+        capability_plan = plan_capabilities(
+            scan, claims, graph, "host:linux-fixture"
+        )
+        if capability_plan["status"] != "all_requirements_have_candidates":
+            raise InspectionError("reviewed fixture graph did not yield candidates")
         return {
             "scenario": "project-owned native Linux missing-library experiment",
             "inspection": scan,
             "plan": proposed,
+            "capability_graph": capability_plan,
             "verification": outcome,
             "execution_scope": "only checked-in fixture; no arbitrary executables",
             "warning": "This test is not a security sandbox or compatibility guarantee.",
