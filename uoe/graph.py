@@ -120,31 +120,30 @@ def validate(graph):
 
 
 def plan(graph, artifact_id, host_id):
-    """Return static candidates, never execution permission or compatibility proof."""
+    """Return read-only candidates using indexed graph edges, not nested full scans."""
     nodes = validate(graph)
     if not _nonempty(artifact_id) or nodes.get(artifact_id, {}).get("kind") != "artifact":
         _fail("unknown artifact")
     if not _nonempty(host_id) or nodes.get(host_id, {}).get("kind") != "host":
         _fail("unknown host")
 
-    edges = graph["edges"]
-    required = sorted((e for e in edges if e["relationship"] == "requires"
-                       and e["source"] == artifact_id and e["status"] != "rejected"),
-                      key=lambda x: (x["target"], x["id"]))
+    required, providers_by_capability, hosts_by_provider = [], {}, {}
+    for e in graph["edges"]:
+        if e["status"] == "rejected":
+            continue
+        if e["relationship"] == "requires" and e["source"] == artifact_id:
+            required.append(e)
+        elif e["relationship"] == "provides":
+            providers_by_capability.setdefault(e["target"], []).append(e)
+        elif e["relationship"] == "available_on" and e["target"] == host_id:
+            hosts_by_provider.setdefault(e["source"], []).append(e)
+
+    required.sort(key=lambda e: (e["target"], e["id"]))
     results = []
     for req in required:
         candidates = []
-        for provided in edges:
-            if not (provided["relationship"] == "provides"
-                    and provided["target"] == req["target"]
-                    and provided["status"] != "rejected"):
-                continue
-            for hosted in edges:
-                if not (hosted["relationship"] == "available_on"
-                        and hosted["source"] == provided["source"]
-                        and hosted["target"] == host_id
-                        and hosted["status"] != "rejected"):
-                    continue
+        for provided in providers_by_capability.get(req["target"], []):
+            for hosted in hosts_by_provider.get(provided["source"], []):
                 is_test_backed = provided["status"] == hosted["status"] == "tested"
                 candidates.append({
                     "provider": provided["source"],
@@ -157,17 +156,16 @@ def plan(graph, artifact_id, host_id):
             c["provider"],
             c["evidence_edges"]
         ))
-        # Collapse duplicate provider candidates, preferring a test-backed path.
-        seen = set()
         unique = []
+        seen = set()
         for item in candidates:
             if item["provider"] not in seen:
-                seen.add(item["provider"])
                 unique.append(item)
+                seen.add(item["provider"])
         results.append({
             "capability": req["target"],
             "requirement_status": req["status"],
-            "state": ("unresolved" if not unique else unique[0]["assessment"]),
+            "state": "unresolved" if not unique else unique[0]["assessment"],
             "candidates": unique
         })
     return {
