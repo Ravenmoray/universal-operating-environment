@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,7 +19,7 @@ def _print(data: dict):
     print(json.dumps(data, indent=2, sort_keys=True))
 
 
-def _demo():
+def _demo(export_dir: Path | None = None):
     """Explicitly run ONLY the checked-in UOE-owned C fixture and its oracle."""
     if sys.platform != "linux":
         raise InspectionError("controlled demo currently requires Linux")
@@ -73,11 +74,32 @@ def _demo():
         )
         if capability_plan["status"] != "all_requirements_have_candidates":
             raise InspectionError("reviewed fixture graph did not yield candidates")
+        exports = None
+        if export_dir is not None:
+            # Export only reviewed project-owned artifacts; never fetched or
+            # generated third-party binaries. Refuse overwriting existing paths.
+            export_dir = export_dir.resolve()
+            if export_dir.exists():
+                raise InspectionError("demo export directory must not already exist")
+            export_dir.mkdir(parents=True)
+            binary = export_dir / "uoe-demo-client"
+            shutil.copy2(output, binary)
+            graph_file = export_dir / "graph.json"
+            claims_file = export_dir / "claims.json"
+            graph_file.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
+            claims_file.write_text(json.dumps(claims, indent=2, sort_keys=True) + "\n")
+            exports = {
+                "artifact": str(binary),
+                "claims": str(claims_file),
+                "graph": str(graph_file),
+                "host_id": "host:linux-fixture",
+            }
         return {
             "scenario": "project-owned native Linux missing-library experiment",
             "inspection": scan,
             "plan": proposed,
             "capability_graph": capability_plan,
+            "exported_files": exports,
             "verification": outcome,
             "execution_scope": "only checked-in fixture; no arbitrary executables",
             "warning": "This test is not a security sandbox or compatibility guarantee.",
@@ -108,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         "--execute-reviewed-fixture", action="store_true", required=False,
         help="Acknowledge that this command compiles and executes project-owned C code"
     )
+    demo_cmd.add_argument("--export-dir", type=Path,
+                          help="Create a new directory with reviewed binary and JSON fixtures")
     args = parser.parse_args(argv)
 
     try:
@@ -128,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "demo":
             if not args.execute_reviewed_fixture:
                 parser.error("demo executes local code; specify --execute-reviewed-fixture")
-            result = _demo()
+            result = _demo(args.export_dir)
         else:
             parser.error("unknown command")
         _print(result)
