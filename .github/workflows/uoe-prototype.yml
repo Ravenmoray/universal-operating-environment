@@ -53,11 +53,20 @@ jobs:
           python-version: "3.12"
       - name: Compile and run only the checked-in UOE-owned fixture
         run: |
-          python3 -m uoe demo --execute-reviewed-fixture > /tmp/uoe-demo-report.json
-          python3 -c 'import json; p=json.load(open("/tmp/uoe-demo-report.json")); assert p["inspection"]["binary"]["format"] == "ELF"; assert p["verification"]["status"] == "passed"; assert p["plan"]["status"] == "candidates_found"'
+          python3 -m uoe demo --execute-reviewed-fixture --export-dir /tmp/uoe-v02-demo-export > /tmp/uoe-demo-report.json
+          python3 -m uoe plan /tmp/uoe-v02-demo-export/uoe-demo-client \
+            --claims /tmp/uoe-v02-demo-export/claims.json \
+            --graph /tmp/uoe-v02-demo-export/graph.json \
+            --host-id host:linux-fixture > /tmp/uoe-v02-bound-plan.json
+          python3 -c 'import json; p=json.load(open("/tmp/uoe-demo-report.json")); assert p["inspection"]["binary"]["format"] == "ELF"; assert p["verification"]["status"] == "passed"; assert p["plan"]["status"] == "candidates_found"; assert len(p["capability_graph"]["requirements"][0]["candidates"]) == 2'
+          python3 -c 'import json; p=json.load(open("/tmp/uoe-v02-bound-plan.json")); assert p["capability_graph"]["status"] == "all_requirements_have_candidates"; assert p["capability_graph"]["evidence_authenticated"] is False'
       - uses: actions/upload-artifact@v4
         with:
           name: uoe-prototype-demo
-          path: /tmp/uoe-demo-report.json
+          path: |
+            /tmp/uoe-demo-report.json
+            /tmp/uoe-v02-bound-plan.json
+            /tmp/uoe-v02-demo-export/claims.json
+            /tmp/uoe-v02-demo-export/graph.json
           if-no-files-found: error
           retention-days: 30
