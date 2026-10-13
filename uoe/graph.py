@@ -1,8 +1,3 @@
-"""Shared experimental graph validator and static planner.
-
-Temporary reuse of the v0.1 graph implementation. Version 1 should converge
-all graph contracts on a single schema and package.
-"""
 """Read-only, evidence-bound capability graph experiment.
 
 This does not inspect or execute binaries and cannot establish real-world
