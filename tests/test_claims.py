@@ -180,6 +180,17 @@ class ClaimsTests(unittest.TestCase):
         with self.assertRaisesRegex(ClaimError, "exceeds"):
             load_claims(self.claims_path, self.inspection["artifact"]["sha256"])
 
+    def test_planner_size_limit_is_explicit(self):
+        # Internally valid parallel provider claims that exceed the v0.2
+        # bound must be rejected rather than consuming unbounded resources.
+        original = copy.deepcopy(self.graph["edges"][1])
+        for i in range(256):
+            extra = copy.deepcopy(original)
+            extra["id"] = "edge:additional-" + str(i)
+            self.graph["edges"].append(extra)
+        with self.assertRaisesRegex(ClaimError, "planning limits"):
+            self.evaluate()
+
     def test_order_invariance(self):
         baseline = self.evaluate()
         self.graph["nodes"].reverse()
