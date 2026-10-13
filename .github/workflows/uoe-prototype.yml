@@ -1,0 +1,60 @@
+name: UOE CLI prototype
+
+on:
+  push:
+    branches:
+      - main
+      - prototype/portable-cli-v0
+    paths:
+      - "uoe/**"
+      - "tests/test_uoe_cli.py"
+      - ".github/workflows/uoe-prototype.yml"
+  pull_request:
+    paths:
+      - "uoe/**"
+      - "tests/test_uoe_cli.py"
+      - ".github/workflows/uoe-prototype.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-inspection-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test inspect and plan without running supplied artifacts
+        run: python3 -m unittest discover -s tests -p 'test_uoe_cli.py' -v
+      - name: Check CLI help
+        run: python3 -m uoe --help
+
+  controlled-demo:
+    # Never execute C files from an untrusted pull_request checkout.
+    if: github.event_name != 'pull_request'
+    needs: static-inspection-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and run only the checked-in UOE-owned fixture
+        run: |
+          python3 -m uoe demo --execute-reviewed-fixture > /tmp/uoe-demo-report.json
+          python3 -c 'import json; p=json.load(open("/tmp/uoe-demo-report.json")); assert p["inspection"]["binary"]["format"] == "ELF"; assert p["verification"]["status"] == "passed"; assert p["plan"]["status"] == "candidates_found"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uoe-prototype-demo
+          path: /tmp/uoe-demo-report.json
+          if-no-files-found: error
+          retention-days: 30
