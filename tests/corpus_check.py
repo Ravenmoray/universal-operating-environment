@@ -50,7 +50,9 @@ def run(command):
 def candidates(paths):
     seen = set()  # a symlinked root (e.g. /lib -> /usr/lib) or hard link must count once
     for root in paths:
-        root = Path(root)
+        # Absolute, so a file named like an option (``--eval=...``) can never be parsed as
+        # one by the reference tools it is handed to (node, readelf, llvm-*).
+        root = Path(os.path.abspath(root))
         files = [root] if root.is_file() else (
             Path(dirpath) / name for dirpath, _, names in os.walk(root) for name in sorted(names))
         for path in files:
@@ -107,20 +109,21 @@ def observed_pe(report):
             for d in report['static_dependencies'] if d['kind'] == 'shared_library']
 
 
-def reference_clr(path):
-    """Managed references via the optional dnfile package (None when not importable)."""
-    try:
-        import dnfile
-    except ImportError:
-        return None
+def clr_facts(dn):
+    """Assembly references and module references of a parsed ``dnfile.dnPE``, as uoe reports them."""
     import hashlib
 
     def text(item):
         return item.value.decode() if isinstance(item.value, bytes) else item.value
-    try:
-        tables = dnfile.dnPE(str(path)).net.mdtables
-    except Exception:
-        return 'rejected'
+    if dn.net.metadata.struct.NumberOfStreams != len(dn.net.metadata.streams_list):
+        raise ValueError('dnfile stopped before reading every declared metadata stream')
+    for stream in dn.net.metadata.streams_list:
+        # dnfile matches the whole 8-byte padded name field, so a stream whose NUL padding is
+        # not all zero (which CoreCLR and uoe accept) falls into a generic stream and is lost.
+        if type(stream).__name__ == 'GenericStream' and bytes(stream.struct.Name).split(b'\0')[0] in (
+                b'#~', b'#-', b'#Strings', b'#US', b'#GUID', b'#Blob'):
+            raise ValueError('dnfile did not recognise a standard metadata stream')
+    tables = dn.net.mdtables
     assemblies = []
     for row in (tables.AssemblyRef.rows if tables.AssemblyRef else []):
         key = bytes(row.PublicKey.value) if row.PublicKey is not None and row.PublicKey.value else b''
@@ -129,6 +132,18 @@ def reference_clr(path):
                            text(row.Culture) or None, token))
     modules = [text(row.Name) for row in (tables.ModuleRef.rows if tables.ModuleRef else [])]
     return assemblies, modules
+
+
+def reference_clr(path):
+    """Managed references via the optional dnfile package (None when not importable)."""
+    try:
+        import dnfile
+    except ImportError:
+        return None
+    try:
+        return clr_facts(dnfile.dnPE(str(path)))
+    except Exception:
+        return 'rejected'
 
 
 def observed_clr(report):

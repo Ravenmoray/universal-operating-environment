@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from uoe.binary_input import BinaryError
+import uoe.pe as pe
 from uoe.pe import inspect_dependencies
 from uoe.inspector import inspect_file
 
@@ -53,6 +54,39 @@ def with_delay(bits=64, attributes=1):
     directory = 0x98 + (112 if bits == 64 else 96)
     struct.pack_into('<II', blob, directory + 13 * 8, 0x1100, 64)
     return blob
+
+
+def big_import_fixture(count, bits=64):
+    """A PE whose single import descriptor names ``count`` symbols from one DLL.
+
+    Realistic size: short names, one hint/name entry each, so the read budget (not the
+    symbol count) is what limited the earlier parser to roughly 1,950 names.
+    """
+    width = 8 if bits == 64 else 4
+    ilt_size = (count + 1) * width
+    ilt, iat = 0x50, 0x50 + ilt_size
+    entries_at = iat + ilt_size
+    entries, offsets = bytearray(), []
+    for i in range(count):
+        offsets.append(entries_at + len(entries))
+        name = f'f{i:05d}'.encode() + b'\0'
+        entries += struct.pack('<H', i & 0xffff) + name + (b'\0' if len(name) % 2 else b'')
+    content = bytearray(entries_at) + entries
+    struct.pack_into('<IIIII', content, 0, 0x1000 + ilt, 0, 0, 0x1000 + 0x40, 0x1000 + iat)
+    content[0x40:0x48] = b'big.dll\0'
+    thunk = '<Q' if bits == 64 else '<I'
+    for table in (ilt, iat):
+        for i, offset in enumerate(offsets):
+            struct.pack_into(thunk, content, table + i * width, 0x1000 + offset)
+    raw = (len(content) + 0x1ff) & ~0x1ff
+    blob = bytearray(fixture(bits)[:0x200]) + content + bytes(raw - len(content))
+    optional = 240 if bits == 64 else 224
+    directory = 0x98 + (112 if bits == 64 else 96)
+    struct.pack_into('<II', blob, directory + 8, 0x1000, 40)
+    struct.pack_into('<I', blob, 0x98 + 56, 0x1000 + raw)
+    section = 0x98 + optional
+    struct.pack_into('<IIII', blob, section + 8, raw, 0x1000, raw, 0x200)
+    return bytes(blob)
 
 
 def scan(data):
@@ -115,7 +149,6 @@ class PeDependencyTests(unittest.TestCase):
     def test_malformed_delay_descriptors_are_rejected(self):
         directory = 0x98 + 112
         cases = {
-            'va-based attributes': lambda b: struct.pack_into('<I', b, 0x300, 0),
             'reserved attribute bits': lambda b: struct.pack_into('<I', b, 0x300, 3),
             'no dll name': lambda b: struct.pack_into('<I', b, 0x304, 0),
             'no name table': lambda b: struct.pack_into('<I', b, 0x310, 0),
@@ -135,6 +168,77 @@ class PeDependencyTests(unittest.TestCase):
             mutate(data)
             with self.subTest(label), self.assertRaises(BinaryError):
                 scan(data)
+
+    def test_legacy_pointer_based_delay_descriptors_are_unknowns_not_failures(self):
+        data = with_delay(attributes=0)
+        result = scan(data)
+        # The normal import is still reported; the undecodable legacy descriptor is an unknown.
+        self.assertEqual([(d['load_kind'], d['name']) for d in result['dependencies']],
+                         [('static', 'example.dll')])
+        self.assertTrue(any('Legacy pointer-based' in x for x in result['unknowns']))
+        self.assertFalse(any('Legacy pointer-based' in x for x in scan(with_delay())['unknowns']))
+        # ...whereas reserved attribute bits are malformed, not merely unsupported.
+        for attributes in (2, 3, 0x80000001):
+            with self.subTest(attributes=attributes), self.assertRaisesRegex(BinaryError, 'attributes'):
+                scan(with_delay(attributes=attributes))
+
+    def test_documented_symbol_limit_is_reachable(self):
+        # Earlier, each name read charged the read budget for up to 4 KiB, so a valid PE with
+        # about 1,950 named imports was rejected although the documented limit is 4,096.
+        for bits in (32, 64):
+            with self.subTest(bits=bits, count=pe.MAX_SYMBOLS):
+                result = scan(big_import_fixture(pe.MAX_SYMBOLS, bits))
+                self.assertEqual(len(result['dependencies'][0]['symbols']), pe.MAX_SYMBOLS)
+                self.assertEqual(result['dependencies'][0]['symbols'][-1]['name'], f'f{pe.MAX_SYMBOLS - 1:05d}')
+        with self.assertRaisesRegex(BinaryError, 'symbol count limit'):
+            scan(big_import_fixture(pe.MAX_SYMBOLS + 1))
+
+    def test_names_are_charged_for_the_bytes_actually_read(self):
+        from unittest.mock import patch
+        from uoe.binary_input import Reader
+        data = big_import_fixture(2300)
+        spent = []
+
+        class Recording(Reader):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                spent.append(self)
+
+        with patch.object(pe, 'Reader', Recording):
+            inspect_dependencies(io.BytesIO(data), len(data))
+        used = 8_000_000 - spent[0].remaining
+        # 2,300 names of 7 bytes: two 8-byte thunk tables, the hint/name entries and one
+        # 64-byte chunk per name. Charging the 4,097-byte worst case per name would be ~9.4 MB.
+        self.assertLess(used, 2_000_000)
+        self.assertGreater(used, 2300 * 64)
+
+    def test_a_bound_import_with_a_lookup_table_is_read_from_the_lookup_table(self):
+        data = fixture()
+        struct.pack_into('<I', data, 0x204, 0x5f5e100)         # TimeDateStamp != 0 marks a bound import
+        row = scan(data)['dependencies'][0]
+        self.assertEqual([x.get('name') for x in row['symbols']], ['DoWork', None])
+        self.assertEqual(row['symbols'][1]['ordinal'], 42)
+
+    def test_truncation_inside_the_delay_tables_reaches_the_delay_parser(self):
+        # The every-truncation test fails at the PE section check. Here the file stays whole but
+        # the section's file-backed size ends at `cut`: the normal imports (needing bytes up to
+        # 0xc9) parse, so any failure between 0xca and the end of the delay tables (0x18a) is the
+        # delay-load path hitting data that is not there.
+        data = with_delay()
+        section = 0x98 + 240
+        no_delay = bytearray(data)
+        struct.pack_into('<II', no_delay, 0x98 + 112 + 13 * 8, 0, 0)
+        for cut in range(0xca, 0x18b):
+            cropped = bytearray(data[:0x200 + cut])
+            struct.pack_into('<I', cropped, section + 16, cut)
+            plain = bytearray(no_delay[:0x200 + cut])
+            struct.pack_into('<I', plain, section + 16, cut)
+            self.assertEqual(len(scan(bytes(plain))['dependencies']), 1, cut)    # normal import survives
+            with self.subTest(cut=cut), self.assertRaises(BinaryError):
+                scan(bytes(cropped))
+        whole = bytearray(data[:0x200 + 0x18b])
+        struct.pack_into('<I', whole, section + 16, 0x18b)
+        self.assertEqual([d['load_kind'] for d in scan(bytes(whole))['dependencies']], ['static', 'delay'])
 
     def test_normal_and_delay_imports_share_the_symbol_and_dll_budgets(self):
         from unittest.mock import patch
@@ -245,13 +349,17 @@ class PeDependencyTests(unittest.TestCase):
                 report = inspect_file(exe)
                 reference = subprocess.run(['llvm-readobj', '--coff-imports', str(exe)], check=True,
                                            capture_output=True, text=True, timeout=30).stdout
-                expected = [('delay' if kind else 'static', name)
-                            for kind, name in re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n', reference, re.M)]
-                self.assertEqual([(d['load_kind'], d['name']) for d in report['static_dependencies']], expected)
-                self.assertEqual(expected, [('static', 'kernel32.dll'), ('delay', 'user32.dll')])
-                delayed = report['static_dependencies'][1]
-                self.assertEqual(sorted(x['name'] for x in delayed['symbols']),
-                                 ['GetDesktopWindow', 'MessageBoxA'])
+                # Whole blocks, not just DLL names: every symbol, in order, per DLL.
+                blocks = re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', reference, re.S | re.M)
+                expected = [('delay' if kind else 'static', name,
+                             [symbol for symbol, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
+                            for kind, name, body in blocks]
+                self.assertEqual([(d['load_kind'], d['name'], [x['name'] for x in d['symbols']])
+                                  for d in report['static_dependencies']], expected)
+                self.assertEqual([(kind, name) for kind, name, _ in expected],
+                                 [('static', 'kernel32.dll'), ('delay', 'user32.dll')])
+                self.assertEqual(sorted(expected[1][2]), ['GetDesktopWindow', 'MessageBoxA'])
+                self.assertEqual(sorted(expected[0][2]), ['ExitProcess', 'GetCurrentProcessId'])
                 self.assertFalse(report['execution_attempted'])
 
     @unittest.skipUnless(shutil.which('x86_64-w64-mingw32-gcc'), 'requires MinGW (main CI)')

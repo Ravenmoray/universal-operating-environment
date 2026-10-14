@@ -5,10 +5,12 @@ author's blind spots. This note records two independent-oracle checks run agains
 v0.3 parsers, **what they found**, and what they cannot show. Both are reproducible
 with scripts in `tests/` that only *read* files.
 
-> **Safety.** The reference tools (`readelf`, `llvm-readobj`, `llvm-objdump`, Node.js)
-> parse the files too, and V8 compiles WebAssembly. Run these scripts only on trusted
-> corpora or inside a disposable, isolated environment — never on untrusted downloads
-> on a workstation. The scripts never execute the inputs.
+> **Safety.** The reference tools (`readelf`, `llvm-readobj`, `llvm-objdump`, Node.js and
+> the optional `dnfile`/`pefile` Python packages) parse the files too, and V8 compiles
+> WebAssembly. Run these scripts only on trusted corpora or inside a disposable,
+> isolated environment — never on untrusted downloads on a workstation. The scripts never
+> execute the inputs. File names are passed to the reference tools as absolute paths so
+> that a file named like an option cannot be read as one.
 
 ## 1. Real-world corpus comparison
 
@@ -23,6 +25,7 @@ independent reference:
 | --- | --- | --- |
 | ELF | GNU `readelf -dW` / `-lW` | `NEEDED` entries and program interpreter, in order |
 | PE | `llvm-readobj --coff-imports` | DLL names, order and imported symbol names |
+| .NET (PE with a CLR header) | [`dnfile`](https://github.com/mandiant/dnfile) 0.18.0, optional | `AssemblyRef` name, version, culture and public-key token; `ModuleRef` names |
 | WASM | Node.js `WebAssembly.Module.imports` | module, name and kind of every import |
 | Mach-O | `llvm-objdump --macho` | dylib and rpath lists across all slices (own `LC_ID_DYLIB` excluded) |
 
@@ -60,9 +63,12 @@ distribution's build outputs, is not redistributable and is not committed.
 ```
 python3 tests/fuzz_differential.py wasm  --seed 101 --count 20000
 python3 tests/fuzz_differential.py macho --seed 101 --count 3000
+python3 tests/fuzz_differential.py clr   --seed 101 --count 5000     # needs: pip install dnfile==0.18.0
 ```
 
-Small seed inputs are mutated (byte replacement, deletion, insertion) and parsed.
+Small seed inputs are mutated (byte replacement, deletion, insertion; for `clr`, byte
+replacement biased towards the CLI header, metadata root, stream headers and table header)
+and parsed.
 The contract checked is one-sided on purpose: `uoe` may be *stricter* than the
 reference, but must never reject or misreport something the reference accepts.
 
@@ -82,40 +88,54 @@ The 52 PE files in the first corpus run contained **no** delay-load directory an
 were found or built. Sources, all used read-only and not committed (their licenses
 were not reviewed for redistribution; they are fetched only for local parsing):
 
-- **Real MSVC-built delay-load files:** 103 PE files extracted from twelve PyPI
-  `win_amd64` wheels (cffi, cryptography, greenlet, grpcio, lxml, markupsafe, numpy,
-  orjson, pillow, psutil, pywin32, pyzmq). Three of them (`win32api.pyd`,
-  `win32evtlog.pyd`, `propsys.pyd`, all from pywin32) have a delay-import table, each
-  with one delayed DLL and a bound-delay-import table present.
+- **Real MSVC-built delay-load files:** 103 PE files (mostly `.pyd` extension modules)
+  extracted from twelve PyPI `win_amd64` wheels (cffi, cryptography, greenlet, grpcio,
+  lxml, markupsafe, numpy, orjson, pillow, psutil, pywin32, pyzmq). Three of them
+  (`win32api.pyd`, `win32evtlog.pyd`, `propsys.pyd`, all from pywin32) have a
+  delay-import table, each naming one delayed DLL (`POWRPROF.dll`, `wevtapi.dll`,
+  `SHELL32.dll`) with a non-empty bound-delay-import table and no unload table.
 - **Real managed assemblies:** `Python.Runtime.dll` (pythonnet 3.2.1, a .NET Standard 2.0
   library with five P/Invoke module references) and `ClrLoader.dll` for x86 and amd64
   (clr_loader 0.3.1).
 - **Linker output we control:** a PE built with `lld-link` (x86-64) with `user32.dll`
-  delay-loaded, also used by the unit tests for x86-64 and ARM64.
+  delay-loaded, also built (x86-64 and ARM64) by the unit tests.
 
 References: `llvm-readobj --coff-imports` for imports and delay imports (DLL names,
 delay vs static, symbol names in order) and [`dnfile`](https://github.com/mandiant/dnfile)
-0.18.0 for assembly and module references (name, version, culture, public-key token).
+0.18.0 (with `pefile` 2024.8.26) for assembly and module references (name, version,
+culture, public-key token).
 
 | Check | Result |
 | --- | --- |
-| `corpus_check.py` over those files (107 PE files) vs `llvm-readobj` | 107 / 107 matched, including all 3 MSVC delay-load files |
-| The 3 managed assemblies vs `dnfile` | 3 / 3 matched on assembly refs and module refs |
-| CLR differential fuzz vs `dnfile` (mutations biased to the CLI header, metadata root, stream headers and table header of the three assemblies) | CLR_FUZZ_TOTALS |
+| `corpus_check.py` over those files (107 PE files: 103 from wheels, 3 managed, 1 `lld-link` build) vs `llvm-readobj` | 107 / 107 matched, including all 3 MSVC delay-load files and the `lld-link` file; 0 rejected |
+| The 3 managed assemblies vs `dnfile` | 3 / 3 matched on assembly refs (name, version, culture, token) and module refs |
+| `fuzz_differential.py clr --seed 101 --count 5000` (3 synthetic seeds: narrow heaps, all heap indexes wide, no modules) | 1,960 accepted by both with identical facts; 1,551 rejected by both; 1,361 rejected by `uoe` only (stricter); 128 accepted by `uoe` where `dnfile` failed or read the metadata incompletely (not compared); **0** mismatches, **0** crashes |
+| `fuzz_differential.py clr --seed 102 --count 3000 --seed-file …` (the 3 synthetic seeds plus the 3 real assemblies) | 1,815 accepted by both with identical facts; 595 rejected by both; 550 rejected by `uoe` only (stricter); 40 accepted by `uoe` where `dnfile` failed or read the metadata incompletely (not compared); **0** mismatches, **0** crashes |
+
+Further runs of the same tool during development (seeds 1–4 at 3,000 cases and seeds
+11–12 at 4,000, 20,000 cases in all, after the fixes below) also found no mismatch.
 
 Treat the sample sizes honestly: three delay-load files from one project, and three
-managed images from two small packages. There is no `System.Private.CoreLib`-scale
-assembly, no ReadyToRun or single-file bundle, and no .NET Framework 2.0 metadata
-(`v2.0.50727`) in the set. The unit-test fixtures cover wide heap and table indexes
-(synthetic, with hand-computed row sizes, and cross-checked with `dnfile`), which the
-real files do not.
+managed images from two small packages, all with narrow heaps. There is no
+`System.Private.CoreLib`-scale assembly, no ReadyToRun or single-file bundle, and no
+.NET Framework 2.0 metadata (`v2.0.50727`) in the set. Of the coded indexes whose width
+depends on row counts, only `HasCustomAttribute` is wide in a real file
+(`Python.Runtime.dll`: `MethodDef` has 3,920 and `Param` 3,276 rows, above the 2,048
+threshold); wide heap indexes and wide simple indexes appear only in the synthetic
+unit-test fixtures (hand-computed row sizes, cross-checked with `dnfile`).
 
-The differential fuzz again enforces only the one-sided contract: `uoe` may be stricter
-than `dnfile` (which ignores stream bounds, accepts empty names and non-UTF-8 strings,
-and does not enforce header sizes), but must not misreport a result both accept. The
-rejections it records are of the deliberate kinds — stream or table data outside the
-declared bounds, row-count budgets, a CLI header size other than 72, non-ASCII stream
-names, non-UTF-8 version strings and malformed public-key blobs.
+The CLR fuzz enforces only a one-sided contract, and a weaker one than WASM's, because
+`dnfile` is a lenient analysis library rather than a loader: `uoe` may be stricter than
+`dnfile`, but where both accept an input the assembly references (name, version,
+culture, token) and module references must be identical, and `uoe` must never raise
+anything but a clean rejection. The rejections it recorded are of the deliberate kinds;
+the most frequent were non-UTF-8 strings, a stream or table running past its declared
+bounds, blob indexes outside the heap, non-UTF-8 version strings, non-ASCII stream names,
+row-count budgets and a CLI header size other than 72. Inputs `dnfile` cannot parse or
+reads incompletely (it stops at a zero-size stream, and does not recognise a stream whose
+name padding is not all NUL; `uoe` accepts both, reading a stream name up to its first
+NUL without checking the padding) are counted separately and are **not** compared, so
+"0 mismatches" excludes them.
 
 ## Defects these checks found
 
@@ -139,15 +159,19 @@ Recorded because the failures are as informative as the passes.
    permanent tests.
 
 4. **The corpus tool silently skipped Python extension modules.** `corpus_check.py` did
-   not treat `.pyd` files as PE, so a scan of twelve Windows wheels saw 12 PE files
+   not treat `.pyd` files as PE, so a scan of the twelve Windows wheels saw 9 PE files
    instead of 103 and found no delay-load files. Fixed; `.pyd` is now in the suffix list.
-5. **The corpus tool's PE comparison would have crashed on managed images**, because it
-   assumed every PE dependency has a `load_kind`; found the first time a managed
-   assembly was fed to it.
+5. **A blob index of 0 was assumed to mean "no key".** The first `dnfile` fuzz compared
+   only names and versions and reported nothing. Adding culture and public-key token
+   to the comparison exposed it: when the first byte of `#Blob` (which ECMA-335 requires
+   to be 0) is mutated, `uoe` still reported "no token" for a reference whose key index is
+   0, while `dnfile` decoded the byte. Index 0 is now decoded like any other index, so
+   such a heap is rejected. A comparison that omits a field cannot find errors in it.
 
 Also recorded, because they were *not* parser defects but would have looked like
 them: `llvm-objdump --dylibs-used` lists a dylib's own `LC_ID_DYLIB` (identity, not a
-requirement); `llvm-readobj` prints `Symbol: Name (hint)`; and Python's
+requirement); `llvm-readobj --coff-imports` prints each imported symbol as
+`Symbol: Name (hint)`; and Python's
 `str.splitlines()` splits on `0x1c`–`0x1e`, which broke a fuzz comparison on a path
 containing mutated control characters. The first Mach-O comparison also double-counted
 because `/lib` is a symlink to `/usr/lib`; the script now de-duplicates by inode.
@@ -186,6 +210,36 @@ as facts. Reproduced and fixed:
 Reported but not changed, as deliberate or out of scope: `cpu_subtype`
 (`arm64e`/`x86_64h`) is not part of the architecture label, and the legacy iOS
 version-min command cannot distinguish the simulator.
+
+## Independent review of the PE/.NET increment
+
+Before this branch was pushed, separate reviewers examined the PE/delay-load and the
+CLR code and tests. They found no blocking defect in the parsers' results, and their
+findings were again treated as claims to reproduce. Reproduced and fixed:
+
+- **A valid PE with about 1,950 named imports was rejected**, although the documented
+  limit is 4,096 symbols: every name read charged the 8,000,000-byte read budget for up
+  to 4 KiB. Names are now read in 64-byte chunks and charged for the bytes read. Tests
+  cover 2,300 and exactly 4,096 symbols (and 4,097 failing on the symbol limit); with the
+  old read, the 2,300-symbol file fails.
+- **A legacy pointer-based delay-import descriptor (`Attributes == 0`) failed the whole
+  file.** It is valid, so it is now an unknown and the rest of the file is reported.
+- **`corpus_check.py` could be made to run code from a file name.** `Path('.') / name`
+  drops the `./`, so scanning a relative root containing a file named
+  `--eval=…` handed Node an option it evaluates. Paths are now absolute; a test
+  reproduces it (it fails without the fix).
+- **Test gaps**: the row-size tests exercised only some tables; rejection tests asserted
+  only the exception type, so any `BinaryError` satisfied them; the "every truncation"
+  tests failed at the PE section check and never reached the CLR or delay parsers;
+  coded-index widening was tested at one point rather than at the exact threshold; and
+  the extra-data header flag and the 2- and 4-byte blob length forms were untested.
+  These now have tests (see [PE notes](pe-dependencies.md)); the legacy-form, bound-import
+  and truncation paths too.
+- **Documentation inaccuracies**: the behavior-change list omitted the legacy descriptor
+  case, the planner notes and the report-scope change; a count of PE files in the
+  wheels was wrong (see defect 4); a claim that the real files exercised wide
+  coded indexes was false for all but one index (see above); and the intro and
+  safety note omitted the Python packages used as references.
 
 ## What this does and does not show
 

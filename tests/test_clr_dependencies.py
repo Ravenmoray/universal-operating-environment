@@ -36,13 +36,22 @@ def pad4(data):
     return data + b'\0' * (-len(data) % 4)
 
 
-def blob_entry(data):
-    assert len(data) < 0x80
-    return bytes([len(data)]) + data
+def blob_entry(data, prefix=1):
+    """A #Blob heap entry with an ECMA-335 II.24.2.4 compressed length of ``prefix`` bytes."""
+    n = len(data)
+    if prefix == 1:
+        assert n < 0x80
+        return bytes([n]) + data
+    if prefix == 2:
+        assert n < 0x4000
+        return bytes([0x80 | (n >> 8), n & 0xff]) + data
+    assert prefix == 4 and n < 0x20000000
+    return bytes([0xC0 | (n >> 24), (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]) + data
 
 
 def build_metadata(assemblies=(), modules=(), *, wide_heaps=0, padding=None, version=b'v4.0.30319',
-                   stream_names=('#~', '#Strings', '#GUID', '#Blob'), edit=None):
+                   stream_names=('#~', '#Strings', '#GUID', '#Blob'), edit=None, extra_data=False,
+                   blob_prefix=None):
     """Return metadata bytes. ``assemblies`` = (name, (a, b, c, d), flags, key, culture).
 
     ``padding`` maps a table id to (row_count, row_size) of zero-filled filler tables
@@ -64,7 +73,7 @@ def build_metadata(assemblies=(), modules=(), *, wide_heaps=0, padding=None, ver
         if not data:
             return 0
         offset = len(blobs)
-        blobs.extend(blob_entry(data))
+        blobs.extend(blob_entry(data, blob_prefix or (1 if len(data) < 0x80 else 2)))
         return offset
 
     def idx(value, width):
@@ -81,8 +90,9 @@ def build_metadata(assemblies=(), modules=(), *, wide_heaps=0, padding=None, ver
         tables[table] = [bytes(size)] * count
     present = sorted(t for t, rows in tables.items() if rows)
     valid = sum(1 << t for t in present)
-    stream = struct.pack('<IBBBBQQ', 0, 2, 0, wide_heaps, 1, valid, 0)
+    stream = struct.pack('<IBBBBQQ', 0, 2, 0, wide_heaps | (0x40 if extra_data else 0), 1, valid, 0)
     stream += b''.join(struct.pack('<I', len(tables[t])) for t in present)
+    stream += b'\xde\xad\xbe\xef' if extra_data else b''
     stream += b''.join(b''.join(tables[t]) for t in present)
     heaps = {'#~': pad4(stream), '#Strings': pad4(bytes(strings)), '#GUID': bytes(16),
              '#Blob': pad4(bytes(blobs))}
@@ -248,6 +258,11 @@ class ClrDependencyTests(unittest.TestCase):
         data = managed_pe(build_metadata(ASSEMBLIES[1:], stream_names=('#-', '#Strings', '#GUID', '#Blob')))
         self.assertEqual(len(managed(scan(data), 'managed_assembly')), 3)
 
+    def expect_rejections(self, cases):
+        for label, (data, pattern) in cases.items():
+            with self.subTest(label), self.assertRaisesRegex(BinaryError, pattern):
+                scan(data)
+
     def test_malformed_headers_and_metadata_are_rejected(self):
         good = build_metadata(ASSEMBLIES[1:], ['m.dll'])
 
@@ -263,30 +278,28 @@ class ClrDependencyTests(unittest.TestCase):
             return struct.pack('<IHHIII', fields['cb'], fields['major'], fields['minor'], fields['rva'],
                                fields['size'], fields['flags']) + bytes(52)
         version_end = 16 + 12
-        cases = {
-            'wrong header size': managed_pe(good, cor_header=header(cb=64)),
-            'directory too small': managed_pe(good, directory=(SECTION_RVA, 71)),
-            'no metadata directory': managed_pe(good, cor_header=header(rva=0, size=0)),
-            'metadata beyond section': managed_pe(good, cor_header=header(size=0x10000)),
-            'bad signature': meta(poke(0, '<I', 0x424A5343)),
-            'version length not multiple of 4': meta(poke(12, '<I', 10)),
-            'version length zero': meta(poke(12, '<I', 0)),
-            'version length too large': meta(poke(12, '<I', 1024)),
-            'zero streams': meta(poke(version_end + 2, '<H', 0)),
-            'too many streams': meta(poke(version_end + 2, '<H', 17)),
-            'stream outside metadata': meta(poke(version_end + 4, '<I', 0x7ffffff0)),
-            'stream length outside metadata': meta(poke(version_end + 8, '<I', 0x7ffffff0)),
-            'duplicate stream': meta(stream_names=('#~', '#Strings', '#Strings', '#Blob')),
-            'no table stream': meta(stream_names=('#Strings', '#GUID', '#Blob')),
-            'both table streams': meta(stream_names=('#~', '#-', '#Strings', '#Blob')),
-            'missing strings heap': meta(stream_names=('#~', '#GUID', '#Blob')),
-            'missing blob heap': meta(stream_names=('#~', '#Strings', '#GUID')),
-            'non-UTF-8 version': meta(poke(16, 'B', 0xff)),
-            'non-ASCII stream name': meta(poke(version_end + 4 + 8, 'B', 0xe9)),
-        }
-        for label, data in cases.items():
-            with self.subTest(label), self.assertRaises(BinaryError):
-                scan(data)
+        self.expect_rejections({
+            'wrong header size': (managed_pe(good, cor_header=header(cb=64)), 'unexpected CLR header size'),
+            'oversized header size': (managed_pe(good, cor_header=header(cb=80)), 'unexpected CLR header size'),
+            'directory too small': (managed_pe(good, directory=(SECTION_RVA, 71)), 'truncated CLR header directory'),
+            'no metadata directory': (managed_pe(good, cor_header=header(rva=0, size=0)), 'no metadata directory'),
+            'metadata beyond section': (managed_pe(good, cor_header=header(size=0x10000)), 'not uniquely file-backed'),
+            'bad signature': (meta(poke(0, '<I', 0x424A5343)), 'invalid CLR metadata signature'),
+            'version length not multiple of 4': (meta(poke(12, '<I', 10)), 'metadata version length'),
+            'version length zero': (meta(poke(12, '<I', 0)), 'metadata version length'),
+            'version length too large': (meta(poke(12, '<I', 1024)), 'metadata version length'),
+            'zero streams': (meta(poke(version_end + 2, '<H', 0)), 'stream count'),
+            'too many streams': (meta(poke(version_end + 2, '<H', 17)), 'stream count'),
+            'stream outside metadata': (meta(poke(version_end + 4, '<I', 0x7ffffff0)), 'stream outside the metadata'),
+            'stream length outside metadata': (meta(poke(version_end + 8, '<I', 0x7ffffff0)), 'stream outside the metadata'),
+            'duplicate stream': (meta(stream_names=('#~', '#Strings', '#Strings', '#Blob')), 'duplicate CLR metadata stream'),
+            'no table stream': (meta(stream_names=('#Strings', '#GUID', '#Blob')), 'exactly one table stream'),
+            'both table streams': (meta(stream_names=('#~', '#-', '#Strings', '#Blob')), 'exactly one table stream'),
+            'missing strings heap': (meta(stream_names=('#~', '#GUID', '#Blob')), 'lacks the #Strings stream'),
+            'missing blob heap': (meta(stream_names=('#~', '#Strings', '#GUID')), 'lacks the #Blob stream'),
+            'non-UTF-8 version': (meta(poke(16, 'B', 0xff)), 'non-UTF-8 CLR metadata version'),
+            'non-ASCII stream name': (meta(poke(version_end + 4 + 8, 'B', 0xe9)), 'non-ASCII CLR stream name'),
+        })
 
     def test_malformed_tables_and_heaps_are_rejected(self):
         # Layout with tables Module(0x00), ModuleRef(0x1A), AssemblyRef(0x23): after the
@@ -301,18 +314,28 @@ class ClrDependencyTests(unittest.TestCase):
                 struct.pack_into(fmt, root, stream_map(root)['#~'][0] + delta, value)
             return apply
         first_ref = 24 + 12 + 10 + 2
-        cases = {
-            'row count beyond limit': build(patch_table(32, '<I', 1 << 25)),
-            'ModuleRef rows beyond the stream': build(patch_table(28, '<I', 400)),
-            'string index outside heap': build(patch_table(first_ref + 14, '<H', 0x7000)),
-            'blob index outside heap': build(patch_table(first_ref + 12, '<H', 0x7000)),
-            'empty assembly name': build(patch_table(first_ref + 14, '<H', 0)),
-            'invalid blob length prefix': build(
-                lambda root: root.__setitem__(stream_map(root)['#Blob'][0] + 1, 0xe0)),
-        }
-        for label, data in cases.items():
-            with self.subTest(label), self.assertRaises(BinaryError):
-                scan(data)
+        self.expect_rejections({
+            'row count beyond limit': (build(patch_table(32, '<I', 1 << 25)), 'row count limit exceeded'),
+            'ModuleRef rows beyond the stream': (build(patch_table(28, '<I', 400)), 'table data outside the table stream'),
+            'string index outside heap': (build(patch_table(first_ref + 14, '<H', 0x7000)), 'string index outside'),
+            'blob index outside heap': (build(patch_table(first_ref + 12, '<H', 0x7000)), 'blob index outside'),
+            'empty assembly name': (build(patch_table(first_ref + 14, '<H', 0)), 'empty CLR assembly reference name'),
+            'empty module name': (managed_pe(build_metadata(ASSEMBLIES[1:], ['']) ), 'empty CLR module reference name'),
+            # lengths whose high prefix bits a wrong mask would silently drop, shrinking them under the budget
+            'two-byte prefix length above the budget': (managed_pe(build_metadata(
+                [('Big', (1, 0, 0, 0), 1, bytes(9000), '')], blob_prefix=2)), 'blob outside its heap or over budget'),
+            'four-byte prefix length above the budget': (managed_pe(build_metadata(
+                [('Big', (1, 0, 0, 0), 1, bytes(8), '')], blob_prefix=4,
+                edit=lambda root: root.__setitem__(slice(stream_map(root)['#Blob'][0] + 1,
+                                                         stream_map(root)['#Blob'][0] + 5), b'\xd0\x00\x00\x08'))),
+             'blob outside its heap or over budget'),
+            'invalid blob length prefix': (build(
+                lambda root: root.__setitem__(stream_map(root)['#Blob'][0] + 1, 0xe0)), 'invalid CLR blob length prefix'),
+            'blob larger than its budget': (managed_pe(build_metadata(
+                [('Big', (1, 0, 0, 0), 1, bytes(5000), '')], blob_prefix=2)), 'blob outside its heap or over budget'),
+            'blob running past the heap': (build(
+                lambda root: root.__setitem__(stream_map(root)['#Blob'][0] + 1, 0x7f)), 'blob outside its heap'),
+        })
         # Claiming wide heap indexes over narrow data must not yield the original answer.
         narrow = bytearray(build_metadata(ASSEMBLIES[1:], ['m.dll']))
         narrow[stream_map(narrow)['#~'][0] + 6] = 7
@@ -321,6 +344,16 @@ class ClrDependencyTests(unittest.TestCase):
         except BinaryError:
             names = None
         self.assertNotEqual(names, ['Lib.Native', 'Plain', 'Tokened'])
+
+    def test_blob_index_zero_is_decoded_not_assumed_to_mean_no_key(self):
+        # The "empty blob" is whatever sits at #Blob offset 0; ECMA-335 requires a zero byte there.
+        # A heap that starts with anything else is malformed, and silently reporting "no key"
+        # would disagree with a reader that decodes the byte (dnfile found this by fuzzing).
+        plain = [('Plain', (0, 0, 0, 1), 0, b'', '')]
+        self.assertIsNone(managed(scan(managed_pe(build_metadata(plain))), 'managed_assembly')[0]['public_key_token'])
+        with self.assertRaisesRegex(BinaryError, 'blob'):
+            scan(managed_pe(build_metadata(
+                plain, edit=lambda root: root.__setitem__(stream_map(root)['#Blob'][0], 5))))
 
     def test_budgets_are_enforced(self):
         many = [(f'a{i}', (1, 0, 0, 0), 0, b'', '') for i in range(clr.MAX_ASSEMBLY_REFS + 1)]
@@ -331,13 +364,18 @@ class ClrDependencyTests(unittest.TestCase):
         mods = [f'm{i}.dll' for i in range(clr.MAX_MODULE_REFS + 1)]
         with self.assertRaisesRegex(BinaryError, 'module reference limit'):
             scan(managed_pe(build_metadata(modules=mods)))
-        with patch.object(clr, 'MAX_STREAMS', 3), self.assertRaises(BinaryError):
+        self.assertEqual(len(managed(scan(managed_pe(build_metadata(modules=mods[:-1]))),
+                                     'native_module_reference')), clr.MAX_MODULE_REFS)
+        with patch.object(clr, 'MAX_STREAMS', 3), self.assertRaisesRegex(BinaryError, 'stream count'):
             scan(managed_pe(build_metadata(ASSEMBLIES[1:])))
+        # MAX_STREAMS is a boundary: the standard four streams pass at exactly four.
+        with patch.object(clr, 'MAX_STREAMS', 4):
+            self.assertEqual(len(managed(scan(managed_pe(build_metadata(ASSEMBLIES[1:]))), 'managed_assembly')), 3)
 
     def test_inconsistent_clr_directory(self):
         good = build_metadata(ASSEMBLIES[1:])
         for directory in ((SECTION_RVA, 0), (0, 72)):
-            with self.subTest(directory=directory), self.assertRaises(BinaryError):
+            with self.subTest(directory=directory), self.assertRaisesRegex(BinaryError, 'inconsistent PE CLR directory'):
                 scan(managed_pe(good, directory=directory))
 
     def test_every_truncation_fails(self):
@@ -391,6 +429,184 @@ class ClrDependencyTests(unittest.TestCase):
             self.assertEqual(len(plan['strategies']), 1)
             self.assertFalse(plan['strategies'][0]['verified_compatible'])
             self.assertTrue(any('.NET' in c for c in plan['strategies'][0]['constraints']), host_os)
+
+    # Hand-written from ECMA-335 II.22, deliberately NOT derived from uoe.clr.SCHEMA:
+    # table id -> (fixed bytes, #Strings columns, #GUID columns, #Blob columns, index columns).
+    # Every simple or coded index is 2 bytes while all row counts stay small.
+    ROW_FORMULAS = {
+        0x01: (0, 2, 0, 0, 1), 0x02: (4, 2, 0, 0, 3), 0x03: (0, 0, 0, 0, 1), 0x04: (2, 1, 0, 1, 0),
+        0x05: (0, 0, 0, 0, 1), 0x06: (8, 1, 0, 1, 1), 0x07: (0, 0, 0, 0, 1), 0x08: (4, 1, 0, 0, 0),
+        0x09: (0, 0, 0, 0, 2), 0x0A: (0, 1, 0, 1, 1), 0x0B: (2, 0, 0, 1, 1), 0x0C: (0, 0, 0, 1, 2),
+        0x0D: (0, 0, 0, 1, 1), 0x0E: (2, 0, 0, 1, 1), 0x0F: (6, 0, 0, 0, 1), 0x10: (4, 0, 0, 0, 1),
+        0x11: (0, 0, 0, 1, 0), 0x12: (0, 0, 0, 0, 2), 0x13: (0, 0, 0, 0, 1), 0x14: (2, 1, 0, 0, 1),
+        0x15: (0, 0, 0, 0, 2), 0x16: (0, 0, 0, 0, 1), 0x17: (2, 1, 0, 1, 0), 0x18: (2, 0, 0, 0, 2),
+        0x19: (0, 0, 0, 0, 3), 0x1B: (0, 0, 0, 1, 0), 0x1C: (2, 1, 0, 0, 2), 0x1D: (4, 0, 0, 0, 1),
+        0x1E: (8, 0, 0, 0, 0), 0x1F: (4, 0, 0, 0, 0), 0x20: (16, 2, 0, 1, 0), 0x21: (4, 0, 0, 0, 0),
+        0x22: (12, 0, 0, 0, 0),
+    }
+
+    @staticmethod
+    def row_size(table, wide_heaps):
+        fixed, strings, guids, blobs, indexes = ClrDependencyTests.ROW_FORMULAS[table]
+        return (fixed + strings * (4 if wide_heaps & 1 else 2) + guids * (4 if wide_heaps & 2 else 2)
+                + blobs * (4 if wide_heaps & 4 else 2) + indexes * 2)
+
+    def test_every_pre_assemblyref_table_has_its_hand_written_row_size(self):
+        # A single wrong row size in any of these tables silently misplaces AssemblyRef, so
+        # every table 0x01-0x22 is populated (Module, ModuleRef and AssemblyRef come from the
+        # builder) under all eight HeapSizes combinations, with and without the extra-data dword.
+        for wide in range(8):
+            for extra in (False, True):
+                with self.subTest(wide_heaps=wide, extra_data=extra):
+                    padding = {table: (3, self.row_size(table, wide)) for table in self.ROW_FORMULAS}
+                    data = managed_pe(build_metadata(ASSEMBLIES[1:], ['m.dll'], wide_heaps=wide,
+                                                     padding=padding, extra_data=extra))
+                    result = scan(data)
+                    self.assertEqual([r['name'] for r in managed(result, 'managed_assembly')],
+                                     ['Lib.Native', 'Plain', 'Tokened'])
+                    self.assertEqual([r['version'] for r in managed(result, 'managed_assembly')],
+                                     ['1.2.3.4', '0.0.0.1', '10.20.30.40'])
+                    self.assertEqual([r['name'] for r in managed(result, 'native_module_reference')], ['m.dll'])
+
+    def test_a_wrong_row_size_in_any_table_is_detected(self):
+        # The negative control for the test above: one byte too many in a single table makes
+        # the declared tables overrun or shift, so the answer must not come back unchanged.
+        for table in self.ROW_FORMULAS:
+            with self.subTest(table=hex(table)):
+                padding = {t: (3, self.row_size(t, 0)) for t in self.ROW_FORMULAS}
+                padding[table] = (3, padding[table][1] + 1)
+                try:
+                    names = [r['name'] for r in managed(scan(managed_pe(build_metadata(
+                        ASSEMBLIES[1:], ['m.dll'], padding=padding))), 'managed_assembly')]
+                except BinaryError:
+                    continue
+                self.assertNotEqual(names, ['Lib.Native', 'Plain', 'Tokened'])
+
+    # Coded indexes used by tables that precede AssemblyRef (ECMA-335 II.24.2.6), transcribed
+    # separately from uoe.clr: (name, tag bits, member tables, consumer table, consumer row
+    # size as a function of this index's width). The consumer's other columns stay narrow.
+    CODED_CASES = [
+        ('TypeDefOrRef', 2, [0x02, 0x01, 0x1B], 0x09, lambda w: 2 + w),
+        ('HasConstant', 2, [0x04, 0x08, 0x17], 0x0B, lambda w: 4 + w),
+        ('HasCustomAttribute', 5, [0x06, 0x04, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x00, 0x0E, 0x17, 0x14,
+                                   0x11, 0x1A, 0x1B, 0x20, 0x23, 0x26, 0x27, 0x28, 0x2A, 0x2C, 0x2B],
+         0x0C, lambda w: w + 4),
+        ('HasFieldMarshal', 1, [0x04, 0x08], 0x0D, lambda w: w + 2),
+        ('HasDeclSecurity', 2, [0x02, 0x06, 0x20], 0x0E, lambda w: w + 4),
+        ('MemberRefParent', 3, [0x02, 0x01, 0x1A, 0x06, 0x1B], 0x0A, lambda w: w + 4),
+        ('HasSemantics', 1, [0x14, 0x17], 0x18, lambda w: 4 + w),
+        ('MethodDefOrRef', 1, [0x06, 0x0A], 0x19, lambda w: 2 + 2 * w),
+        ('MemberForwarded', 1, [0x04, 0x06], 0x1C, lambda w: 6 + w),
+        # Parent is already 4 bytes here (MethodDef/MemberRef >= 2048 rows), so 4 + type + 2.
+        ('CustomAttributeType', 3, [0x06, 0x0A], 0x0C, lambda w: 4 + w + 2),
+        ('ResolutionScope', 2, [0x00, 0x1A, 0x23, 0x01], 0x01, lambda w: w + 4),
+    ]
+
+    @staticmethod
+    def big_table_row_size(table, rows):
+        """Row size of a table that is itself made large; mostly independent of the width under test."""
+        if table == 0x02:      # TypeDef: its own Extends is a TypeDefOrRef (2 bits)
+            return 12 + (4 if rows >= 1 << 14 else 2)
+        if table == 0x01:      # TypeRef: its own ResolutionScope (2 bits)
+            return (4 if rows >= 1 << 14 else 2) + 4
+        fixed = {0x04: 6, 0x06: 14, 0x08: 6, 0x09: 4, 0x0A: 6, 0x0E: 6, 0x11: 2, 0x14: 6,
+                 0x17: 6, 0x1B: 2, 0x20: 22}
+        return fixed.get(table, 4)   # tables after AssemblyRef: contents are never read
+
+    def test_wide_index_thresholds_are_exact(self):
+        # ECMA-335 II.24.2.6: an index is 2 bytes iff every table it may address has fewer than
+        # 2**(16 - tag_bits) rows (simple indexes: fewer than 65,536). For EVERY coded index and
+        # EVERY member table that can be made large, check one row below and exactly at the
+        # threshold: the consumer table's row size flips with the width, so a wrong membership,
+        # tag-bit count or comparison misplaces AssemblyRef. dnfile compares with <= here and is
+        # deliberately not consulted. Module (always one row), ModuleRef (capped at 512 rows) and
+        # AssemblyRef (capped at 1,024) cannot be raised to a threshold through this builder.
+        unreachable = {0x00, 0x1A, 0x23}
+        checked = 0
+        for name, bits, members, consumer, consumer_size in self.CODED_CASES:
+            limit = 1 << (16 - bits)
+            for table in members:
+                if table in unreachable:
+                    continue
+                for rows in (limit - 1, limit):
+                    width = 4 if rows >= limit else 2
+                    padding = {table: (rows, self.big_table_row_size(table, rows)),
+                               consumer: (3, consumer_size(width))}
+                    if table == consumer:
+                        continue
+                    with self.subTest(name, table=hex(table), rows=rows):
+                        data = managed_pe(build_metadata(ASSEMBLIES[1:], ['m.dll'], padding=padding))
+                        result = scan(data)
+                        self.assertEqual([r['name'] for r in managed(result, 'managed_assembly')],
+                                         ['Lib.Native', 'Plain', 'Tokened'])
+                    checked += 1
+        self.assertGreater(checked, 80)
+        # simple (non-coded) table indexes flip at 65,536 rows
+        for rows in (65535, 65536):
+            width = 4 if rows >= 65536 else 2
+            padding = {0x04: (rows, 6), 0x10: (3, 4 + width)}      # FieldLayout.Field is a Field index
+            with self.subTest('Field simple index', rows=rows):
+                result = scan(managed_pe(build_metadata(ASSEMBLIES[1:], ['m.dll'], padding=padding)))
+                self.assertEqual(len(managed(result, 'managed_assembly')), 3)
+
+    def test_extra_data_dword_is_skipped_not_misread(self):
+        plain = scan(managed_pe(build_metadata(ASSEMBLIES[1:], ['m.dll'])))
+        extra = scan(managed_pe(build_metadata(ASSEMBLIES[1:], ['m.dll'], extra_data=True)))
+        self.assertEqual([r['name'] for r in managed(extra, 'managed_assembly')],
+                         [r['name'] for r in managed(plain, 'managed_assembly')])
+        # ...and the dword really shifts the table data: pretending it is absent breaks the read.
+        data = bytearray(build_metadata(ASSEMBLIES[1:], ['m.dll'], extra_data=True))
+        data[stream_map(data)['#~'][0] + 6] &= ~0x40
+        try:
+            names = [r['name'] for r in managed(scan(managed_pe(bytes(data))), 'managed_assembly')]
+        except BinaryError:
+            names = None
+        self.assertNotEqual(names, ['Lib.Native', 'Plain', 'Tokened'])
+
+    def test_two_and_four_byte_compressed_blob_lengths(self):
+        full_key = bytes(range(160))                      # needs the 2-byte prefix (>= 0x80)
+        expected = hashlib.sha1(full_key).digest()[-8:][::-1].hex()
+        for prefix in (None, 2, 4):
+            with self.subTest(prefix=prefix or 'automatic'):
+                rows = scan(managed_pe(build_metadata(
+                    [('Strong', (1, 0, 0, 0), 1, full_key, '')], blob_prefix=prefix)))
+                self.assertEqual(managed(rows, 'managed_assembly')[0]['public_key_token'], expected)
+        # a 4-byte prefix on a small token is legal (non-minimal) and decodes the same way
+        token = bytes.fromhex('b03f5f7f11d50a3a')
+        rows = scan(managed_pe(build_metadata([('Tok', (1, 0, 0, 0), 0, token, '')], blob_prefix=4)))
+        self.assertEqual(managed(rows, 'managed_assembly')[0]['public_key_token'], 'b03f5f7f11d50a3a')
+
+    def test_truncation_inside_the_metadata_reaches_the_clr_parser(self):
+        # The earlier every-truncation test fails at the PE section check. Here the file is
+        # intact but the section's raw (file-backed) size ends at `cut`, so the CLR directory
+        # parses until the first byte it needs is missing.
+        content_start = 0x200
+        data = managed_pe(build_metadata(ASSEMBLIES[1:], ['k.dll']))
+        section = 0x98 + 240
+        full = struct.unpack_from('<I', data, section + 16)[0]
+        # the parser needs the whole declared metadata directory to be file-backed
+        needed = 72 + struct.unpack_from('<I', data, content_start + 8 + 4)[0]
+        self.assertLessEqual(needed, full)
+        for cut in range(0, needed):
+            cropped = bytearray(data[:content_start + cut])
+            struct.pack_into('<I', cropped, section + 16, cut)
+            with self.subTest(cut=cut), self.assertRaises(BinaryError):
+                scan(bytes(cropped))
+        cropped = bytearray(data[:content_start + needed])
+        struct.pack_into('<I', cropped, section + 16, needed)
+        self.assertEqual(len(managed(scan(bytes(cropped)), 'managed_assembly')), 3)
+
+    def test_planner_adds_no_dotnet_note_to_native_pe_files(self):
+        from tests.test_pe_dependencies import fixture
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'native.exe'
+            path.write_bytes(bytes(fixture()))
+            report = inspect_file(path)
+        for host_os in ('linux', 'windows'):
+            plan = plan_inspection(report, host_os=host_os, host_arch='x86_64', available={'wine': True})
+            notes = ' '.join(plan['strategies'][0]['constraints'])
+            self.assertNotIn('.NET', notes)
+            self.assertNotIn('Delay-loaded', notes)
 
     @unittest.skipUnless(dnfile, 'requires the optional dnfile package')
     def test_synthetic_assemblies_agree_with_dnfile(self):

@@ -9,7 +9,7 @@ schema, but no other table's contents are read.
 import hashlib
 import struct
 
-from .binary_input import BinaryError
+from .binary_input import BinaryError, StringError
 
 CLI_HEADER_SIZE = 72
 MAX_STREAMS = 16
@@ -26,6 +26,7 @@ FLAGS = ((0x1, 'ILONLY'), (0x2, '32BITREQUIRED'), (0x4, 'IL_LIBRARY'), (0x8, 'ST
 ASSEMBLY_FLAG_PUBLIC_KEY = 0x1
 
 # Coded index definitions: (tag bits, [table ids by tag value]); None = unused tag.
+# Only indexes used by tables that precede AssemblyRef are needed (e.g. Implementation is not).
 CODED = {
     'TypeDefOrRef': (2, [0x02, 0x01, 0x1B]),
     'HasConstant': (2, [0x04, 0x08, 0x17]),
@@ -37,7 +38,6 @@ CODED = {
     'HasSemantics': (1, [0x14, 0x17]),
     'MethodDefOrRef': (1, [0x06, 0x0A]),
     'MemberForwarded': (1, [0x04, 0x06]),
-    'Implementation': (2, [0x26, 0x23, 0x27]),
     'CustomAttributeType': (3, [None, None, 0x06, 0x0A, None]),
     'ResolutionScope': (2, [0x00, 0x1A, 0x23, 0x01]),
 }
@@ -217,12 +217,12 @@ def inspect_clr(reader, locate, rva, size):
         start, length = heap('#Strings')
         if index >= length:
             raise BinaryError('CLR string index outside the #Strings heap')
-        data = at(start + index, min(MAX_NAME + 1, length - index))
-        end = data.find(b'\0')
-        if end < 0:
-            raise BinaryError('unterminated or overlong CLR string')
         try:
-            return data[:end].decode('utf-8'), start + index
+            raw = reader.cstring(base + start + index, length - index, MAX_NAME)
+        except StringError as exc:
+            raise BinaryError('unterminated or overlong CLR string') from exc
+        try:
+            return raw.decode('utf-8'), start + index
         except UnicodeDecodeError as exc:
             raise BinaryError('non-UTF-8 CLR string') from exc
 
@@ -271,7 +271,7 @@ def inspect_clr(reader, locate, rva, size):
         if not name:
             raise BinaryError('empty CLR assembly reference name')
         culture, _ = text(culture_index)
-        key = blob(key_index) if key_index else b''
+        key = blob(key_index)  # index 0 is the empty blob only if the heap's first byte is 0
         if not key:
             token = None
         elif asm_flags & ASSEMBLY_FLAG_PUBLIC_KEY:

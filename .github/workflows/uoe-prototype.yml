@@ -61,20 +61,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils clang lld llvm
       - name: Install the optional .NET metadata oracle (tests only, pinned)
-        run: python3 -m pip install "dnfile==0.18.0"
+        run: python3 -m pip install "dnfile==0.18.0" "pefile==2024.8.26"
       - name: Record tool versions
         run: |
           readelf --version | head -1
           llvm-objdump --version | sed -n 1,2p
           lld-link --version | head -1
           node --version
-          python3 -m pip show dnfile | sed -n 1,2p
+          python3 -m pip show dnfile pefile | grep -E '^(Name|Version)'
       - name: Format tests with every independent reference present
-        run: python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies tests.test_pe_dependencies tests.test_clr_dependencies -v
-      - name: Seeded differential fuzz (WASM vs V8, Mach-O vs llvm-objdump)
+        run: python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies tests.test_pe_dependencies tests.test_clr_dependencies tests.test_corpus_check -v
+      - name: Seeded differential fuzz (WASM vs V8, Mach-O vs llvm-objdump, .NET metadata vs dnfile)
         run: |
           python3 tests/fuzz_differential.py wasm --seed 101 --count 5000
           python3 tests/fuzz_differential.py macho --seed 101 --count 1000
+          python3 tests/fuzz_differential.py clr --seed 101 --count 2000
       - name: Compare extraction with readelf on the runner's own ELF files
         run: python3 tests/corpus_check.py /usr/bin --limit 400 --fail-on-reject
 

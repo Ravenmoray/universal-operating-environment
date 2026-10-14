@@ -2,8 +2,9 @@
 
 This is not a security boundary. It identifies formats, not application
 compatibility. Dependency observations are limited to what each format parser
-documents (ELF program headers, PE normal imports, WASM import section, Mach-O
-load commands); runtime-resolved requirements always remain unknown.
+documents (ELF program headers, PE imports, delay-load imports and .NET references,
+WASM import section, Mach-O load commands); runtime-resolved requirements always
+remain unknown.
 """
 from __future__ import annotations
 

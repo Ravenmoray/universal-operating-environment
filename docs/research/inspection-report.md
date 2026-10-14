@@ -53,6 +53,16 @@ let a reviewer find the exact bytes with an independent tool.
 
 In universal Mach-O files each entry also has `slice: {index, architecture}`.
 
+PE and .NET details: `load_kind` is `static` for a normal import and `delay` for a
+delay-load import (loaded on first call, so a conditional requirement). For
+`managed_assembly`, `culture` is `null` for the invariant culture and `public_key_token`
+is `null` when the reference carries no key; otherwise it is the stored 8-byte token, or
+the token computed from the full public key when the reference carries one. For
+`managed_runtime`, `flags` names the recognised `COMIMAGE_FLAGS_*` bits (unrecognised
+bits appear as `unknown:0x…`) and `flags_raw` is the unmodified header value.
+`native_module_reference` names are written as the metadata gives them (for example
+`kernel32.dll` or `libdl.so`), not resolved to a file.
+
 Names are exactly what the file says. A name is **not** a verified capability
 contract, does not show the library is installed, and is not resolved against any
 search path.

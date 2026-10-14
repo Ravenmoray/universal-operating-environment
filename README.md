@@ -45,8 +45,9 @@ references, WebAssembly imports, and Mach-O dylib/rpath/platform load commands
 (including universal-binary slices). It then
 proposes runtime and capability-provider candidates. The explicit `demo`
 command runs only reviewed project-owned fixtures. Capability contracts still use explicit declarations; observed library names do
-not establish those contracts. Runtime-loaded libraries, WebAssembly import
-signatures and Mach-O bindings remain explicit unknowns.
+not establish those contracts. Runtime-loaded libraries, the .NET target framework
+and assembly resolution, WebAssembly import signatures and Mach-O bindings remain
+explicit unknowns.
 Details: [ELF](docs/research/elf-dependencies.md) · [PE](docs/research/pe-dependencies.md) ·
 [WebAssembly](docs/research/wasm-dependencies.md) · [Mach-O](docs/research/macho-dependencies.md).
 

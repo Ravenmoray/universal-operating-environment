@@ -1,6 +1,6 @@
-"""Bounded PE32/PE32+ normal imports; no loading, DLL search or execution."""
+"""Bounded PE32/PE32+ normal and delay-load imports and CLR references; no loading, DLL search or execution."""
 import struct
-from .binary_input import BinaryError, Reader
+from .binary_input import BinaryError, Reader, StringError
 from .clr import inspect_clr
 
 MAX_DLLS = 256
@@ -63,12 +63,14 @@ def inspect_dependencies(stream, file_size):
 
     def name(rva):
         offset, remaining = locate(rva)
-        data = reader.read(offset, min(MAX_NAME + 1, remaining))
-        end = data.find(b'\0')
-        if end <= 0:
+        try:
+            raw = reader.cstring(offset, remaining, MAX_NAME)
+        except StringError as exc:
+            raise BinaryError('empty, overlong or unterminated PE import name') from exc
+        if not raw:
             raise BinaryError('empty, overlong or unterminated PE import name')
         try:
-            return data[:end].decode('ascii'), offset
+            return raw.decode('ascii'), offset
         except UnicodeError as exc:
             raise BinaryError('non-ASCII PE import name') from exc
 
@@ -137,8 +139,15 @@ def inspect_dependencies(stream, file_size):
                              'evidence': {'source': 'PE_IMPORT_DESCRIPTOR',
                                           'file_offset': offset, 'name_file_offset': dll_offset}})
     # Delay-load descriptors (IMAGE_DELAYLOAD_DESCRIPTOR): the DLL is loaded on
-    # first call, not at process start. Only the RVA-based form is supported.
+    # first call, not at process start. Only the RVA-based form (Attributes == 1,
+    # what every linker since Visual C++ 2002 emits) is decoded. Attributes == 0 is
+    # the valid legacy pointer-based form: it is reported as an unknown rather than
+    # failing the whole file. Any other value is malformed.
+    legacy_delay = False
     for offset, (attributes, dll_rva, _, iat, names_rva, _, _, _) in descriptors(13, 32, 'delay-import'):
+        if attributes == 0:
+            legacy_delay = True
+            continue
         if attributes != 1:
             raise BinaryError('unsupported PE delay-import descriptor attributes')
         if not dll_rva or not iat or not names_rva:
@@ -148,6 +157,9 @@ def inspect_dependencies(stream, file_size):
                              'load_kind': 'delay', 'symbols': symbols(names_rva),
                              'evidence': {'source': 'PE_DELAY_IMPORT_DESCRIPTOR',
                                           'file_offset': offset, 'name_file_offset': dll_offset}})
+    if legacy_delay:
+        unknowns.append('Legacy pointer-based (Attributes == 0) delay-import descriptors are present '
+                        'and were not decoded')
     clr_rva, clr_size = directory(14)
     if bool(clr_rva) != bool(clr_size):
         raise BinaryError('inconsistent PE CLR directory')
