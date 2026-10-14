@@ -2,6 +2,7 @@ name: Trusted Wine runtime experiment
 
 on:
   push:
+    branches: [main]
     paths:
       - "experiments/missing-capability/src/**"
       - "experiments/missing-capability/include/**"
@@ -15,6 +16,7 @@ permissions:
 
 jobs:
   run-project-owned-pe:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -2,6 +2,7 @@ name: Missing-capability ELF experiment
 
 on:
   push:
+    branches: [main]
     paths:
       - "experiments/missing-capability/**"
       - "experiments/capability-graph/uoe_graph/**"
@@ -14,7 +15,9 @@ permissions:
 
 jobs:
   verify-controlled-fixture:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # Execution of native code is restricted to maintainer-initiated runs.
       # Do not run arbitrary contributor C fixtures on untrusted pull requests.
