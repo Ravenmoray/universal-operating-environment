@@ -2,7 +2,7 @@
 
 **Any software. Any computer. One intelligent environment.**
 
-> **Status:** Research proposal. Universal execution and autonomous management are goals, not implemented capabilities.
+> **Status:** Working v0.2 research prototype on `main`. Static inspection, digest-bound capability planning, and a controlled fixture demonstration are implemented. Universal execution and autonomous management remain goals.
 
 UOE is an open-source effort to develop an AI-native operating environment that understands software requirements, selects or constructs execution strategies, and retains verified knowledge about how its components work.
 
@@ -34,9 +34,16 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 - [Security](SECURITY.md)
 - [Instructions for AI contributors](AGENTS.md)
 
-## First milestone
+## Current milestone
 
-Design an inspector that **does not execute** its input. It will output a versioned, structured manifest of format, architecture, dependencies, evidence and unknowns. The next component, a deterministic planner, identifies potential execution backends.
+The CLI inspects ELF, PE, Mach-O and WASM headers without executing the input,
+then proposes runtime and capability-provider candidates. The explicit `demo`
+command runs only reviewed project-owned fixtures. Dependencies are currently
+supplied through declarations; real binary import extraction is the next feature.
+
+Start with the [working prototype guide](docs/research/working-prototype.md).
+The [next delivery sequence](docs/roadmap/v1-delivery-plan.md#next-delivery-sequence)
+keeps parser work, execution isolation and AI evaluation in separate testable steps.
 
 Initial development host: Linux for practicality, **not** an architectural requirement.
 

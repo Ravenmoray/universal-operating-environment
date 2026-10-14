@@ -50,10 +50,38 @@ v1 must enable a useful, reproducible workflow:
 
 The original vision—'Any software. Any computer. One intelligent environment.'—remains a **direction**, not an acceptance criterion claiming impossible general coverage. v1 can succeed as a powerful research preview while explicitly refusing applications that require unsupported proprietary APIs, DRM, unknown drivers or unavailable hardware.
 
-## Immediate action
+## Next delivery sequence
 
-- Review [Prototype PR #11](https://github.com/Ravenmoray/universal-operating-environment/pull/11) (v0.1).
-- Review the stacked v0.2 PR and test its `inspect`, `plan`, and `demo` commands.
-- Keep [Issue #12](https://github.com/Ravenmoray/universal-operating-environment/issues/12) open until all digest and scoped-evidence checks are reviewed.
-- Open one executable issue per major phase with defined tests and a clear failure path.
-- Do not merge foundational security/architecture decisions just because prototype CI is green.
+PRs #11 and #20 are merged: v0.2 is the current development baseline on `main`.
+No tagged release or production compatibility claim is implied.
+
+1. **Stabilize the shared graph implementation (#21).** Keep one validator/planner
+   in `uoe.graph`, with the original experiment as a compatibility entry point.
+   Run old and new tests in CI whenever that implementation changes. Keep #21
+   open for bounded performance/fuzz work and the remaining trust-boundary audit.
+2. **Deliver v0.3 in small parser PRs (#13), starting with ELF.** First extract
+   PT_INTERP and DT_NEEDED from project-owned fixtures without execution. Require
+   32/64-bit and endian fixtures, malformed offsets/lengths/string tables, explicit
+   dynamic-loading unknowns, and independent comparison with established tooling.
+   Then add PE, WASM and Mach-O support separately. Do not call the full v0.3
+   phase complete until its cross-format robustness and fuzz gates pass.
+3. **Formalize adapters (#14).** Feed observed requirements into versioned
+   native/Wine/WASM descriptors, preserving unknown and unsupported outcomes.
+4. **Build execution controls before broadening execution (#15).** Isolation and
+   denial tests precede unknown binaries or generated adapters. Continue using
+   reviewed project-owned fixtures for current demonstrations.
+5. **Prove reuse, then AI value (#16–#18).** Signed evidence and separate-host
+   replay come before blinded repair trials and expanded compatibility benchmarks.
+6. **Release only the scope supported by evidence (#19).** v1 remains a developer
+   research preview with documented environments and exclusions.
+
+Each implementation PR should include its evidence, remaining limitations and
+linked issue. Existing research issues remain open until their actual acceptance
+criteria are met; merging code does not approve a draft RFC.
+
+### CI trust boundary
+
+Python unit tests on a pull request also execute contributor-controlled code.
+Use disposable hosted runners, read-only tokens, no repository secrets and no
+persisted checkout credentials for those tests. Skipping compiled fixtures alone
+is not an isolation guarantee. Complete the broader workflow audit under #21.

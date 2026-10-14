@@ -16,6 +16,8 @@ PYTHONPATH=experiments/capability-graph python -m uoe_graph plan experiments/cap
 PYTHONPATH=experiments/capability-graph python -m unittest discover -s experiments/capability-graph/tests -v
 ```
 
+The original commands now delegate to the single `uoe.graph` implementation; keep the full repository checkout when using this experiment. Both the experimental and integrated CLI suites exercise that shared implementation. The graph schema remains `0.1.0`, independently of the CLI version.
+
 The validator enforces a minimal contract in Python. A JSON Schema is supplied to document the interchange format; future CI can validate both representations and compare behavior.
 
 **Planning never invokes the program named in the graph.** No automatic downloads, installer execution, networking or privilege escalation.

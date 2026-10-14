@@ -5,6 +5,7 @@ on:
     paths:
       - "experiments/missing-capability/**"
       - "experiments/capability-graph/uoe_graph/**"
+      - "uoe/graph.py"
       - ".github/workflows/missing-capability.yml"
   workflow_dispatch:
 
