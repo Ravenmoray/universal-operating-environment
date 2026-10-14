@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "experiments/missing-capability/**"
+      - "uoe/**"
+      - "tests/test_pe_dependencies.py"
       - ".github/workflows/cross-compile-pe.yml"
   workflow_dispatch:
 
@@ -26,5 +28,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
       - name: Build and statically verify PE32+ executable and DLL
         run: python3 experiments/missing-capability/crosscheck_pe.py
+      - name: Independently check PE imports without running the fixture
+        run: python3 -m unittest discover -s tests -p test_pe_dependencies.py -v
       - name: Explicit scope of this check
         run: echo "Compilation and PE header/symbol validation only; nothing was executed through Wine or Windows."

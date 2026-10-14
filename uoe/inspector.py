@@ -12,6 +12,8 @@ import stat
 import struct
 
 from .elf import ElfError, inspect_dependencies
+from .binary_input import BinaryError
+from .pe import inspect_dependencies as inspect_pe_dependencies
 
 HEADER_LIMIT = 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -102,7 +104,7 @@ def inspect_file(path: str | Path) -> dict:
         raise InspectionError("file too small to identify")
     digest = hashlib.sha256()
     dependency_scan = {"status": "not_implemented", "dependencies": [],
-                       "scope": "dependency extraction is implemented for ELF only"}
+                       "scope": "dependency extraction is implemented for ELF and PE"}
     # O_NONBLOCK prevents a path replaced with a FIFO from blocking at open on
     # POSIX. Recheck the opened descriptor rather than trusting the earlier stat.
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
@@ -122,6 +124,11 @@ def inspect_file(path: str | Path) -> dict:
             try:
                 dependency_scan = inspect_dependencies(handle, before.st_size)
             except ElfError as exc:
+                raise InspectionError(str(exc)) from exc
+        elif header.startswith(b"MZ"):
+            try:
+                dependency_scan = inspect_pe_dependencies(handle, before.st_size)
+            except BinaryError as exc:
                 raise InspectionError(str(exc)) from exc
         after = os.fstat(handle.fileno())
         if (total != before.st_size or
@@ -152,6 +159,8 @@ def inspect_file(path: str | Path) -> dict:
                     "library search paths and runtime behavior remain unresolved"]
         if dependency_scan["status"] != "complete_static":
             unknowns.append("ELF object type is outside dependency inspection scope")
+    if binary_format == "PE":
+        unknowns = dependency_scan["unknowns"]
     return {
         "schema_version": "uoe.inspection.v0.3",
         "artifact": {
