@@ -1,8 +1,19 @@
-# UOE Experimental CLI — v0.1 to v0.2
+# UOE Experimental CLI — v0.3 development
+
+## ELF dependency inspection increment
+
+`inspect` now reports PT_INTERP and direct DT_NEEDED entries for supported ELF
+executables and shared objects. Each dependency includes its byte-offset evidence;
+`plan` includes these as `observed_requirements`. Neither command runs the input.
+The inspection report version is `uoe.inspection.v0.3`; graph and claims schema
+versions are unchanged. See [scope, limits and tests](elf-dependencies.md).
+
+This is the first v0.3 increment, not completion of the cross-format milestone.
+
 
 ## New in v0.2 — Digest-bound capability planning
 
-The v0.2 branch adds a **caller-declared** requirements document, a read-only graph validation and planning library, and a verifiable SHA-256 binding to the selected file. Both the executable and declarations must match byte-for-byte. The graph validates relations and claims of passing tests **internally**; it does not authenticate their real-world origin.
+The merged v0.2 implementation adds a **caller-declared** requirements document, a read-only graph validation and planning library, and a verifiable SHA-256 binding to the selected file. Both the executable and declarations must match byte-for-byte. The graph validates relations and claims of passing tests **internally**; it does not authenticate their real-world origin.
 
 From a trusted Linux repository checkout with a C compiler:
 
@@ -64,7 +75,7 @@ The installed demo still requires the checked-in project-owned C fixture. No LLM
 
 ## Scope and limitations
 
-- The prototype identifies binary headers; it does not yet enumerate DLL imports, ELF DT_NEEDED, Mach-O load commands or WASI imports.
+- The prototype identifies binary headers and ELF direct dependencies; DLL imports, Mach-O load commands and WASI imports remain unimplemented.
 - Static headers cannot identify every runtime-loaded dependency, including the fixture's dynamically loaded DLL.
 - Runtime presence does not establish API compatibility, permission to run, licensing, or safety.
 - Fat Mach-O slices remain unresolved. Files larger than 2 GiB are refused in this v0 experiment.
@@ -73,6 +84,9 @@ The installed demo still requires the checked-in project-owned C fixture. No LLM
 
 ## Next acceptance milestone
 
-Bind a digest-identified artifact to independently sourced requirement claims, then consult test-scoped Capability Graph providers before proposing execution. Compare against a simple dependency registry. Preserve a clear distinction between *candidate*, *behaviorally tested*, and *safe and authorized to execute*.
+Expand dependency observations to the other formats, extend fuzz coverage, then
+connect observed requirements to versioned adapter descriptors. Library names do
+not independently establish capability contracts. Authenticated evidence and
+execution isolation remain later gates.
 
 Related: [Capability Graph proposal](../rfcs/proposals/minimal-capability-graph.md), [Experiment 002](../../experiments/missing-capability/README.md), [AI evaluation methodology](003-ai-adapter-evaluation.md).

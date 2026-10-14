@@ -30,16 +30,25 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Expose a deterministic runner planner with candidate and unresolved states
 - [x] Implement opt-in project-owned Linux end-to-end demo (inspection → planning → verified fixture)
 - [x] Validate 21 inspector/planner tests and the controlled demo in GitHub CI
-- [ ] Review [prototype PR #11](https://github.com/Ravenmoray/universal-operating-environment/pull/11) for merge into `main`
+- [x] Review [prototype PR #11](https://github.com/Ravenmoray/universal-operating-environment/pull/11) for merge into `main`
 - [ ] Parse actual imports, dynamic libraries, interpreter and WASI requirements
-- [ ] Bind artifact SHA-256 and declared capability claims to evidence-backed graph providers
+- [x] Bind artifact SHA-256 and declared capability claims to evidence-backed graph providers
 
-## v0.2 prototype — evidence binding (proposed, stacked on v0.1)
+## v0.2 prototype — evidence binding (merged)
 - [x] Add [digest-bound capability claims and graph join](docs/research/working-prototype.md), with exact artifact SHA-256 comparison
 - [x] Reject mismatched requirements, graph links and unauthenticated host scope; report explicit evidence limitations
 - [x] Extend controlled demo to export artifact/claims/graph and independently replan it in CI
 - [x] Pass 41 combined unit tests and the reviewed demo round-trip ([CI run](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38395865631))
-- [ ] Review and merge v0.2 on top of v0.1 without treating caller-supplied evidence as attested
+- [x] Review and merge v0.2 on top of v0.1 without treating caller-supplied evidence as attested
+
+## v0.3 incremental delivery
+- [x] Consolidate graph validation and add JSON/fan-out budgets with mutation tests
+- [x] Extract ELF PT_INTERP and direct DT_NEEDED with file-offset evidence
+- [x] Test 32/64-bit, both byte orders, malformed inputs and a project-owned missing-library fixture against readelf
+- [ ] Extend sustained fuzzing, benchmarks and independent corpus coverage
+- [ ] Extract PE, WASM and Mach-O dependencies in separate changes
+
+The ELF increment does not complete M1 or the full v0.3 milestone.
 
 ## Planning v0.3 → v1.0
 See [proposed release phases and gates](docs/roadmap/v1-delivery-plan.md):

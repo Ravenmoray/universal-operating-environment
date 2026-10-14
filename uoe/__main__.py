@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                      "non-executing execution planning"),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    inspect_cmd = commands.add_parser("inspect", help="Read an executable's header; never run it")
+    inspect_cmd = commands.add_parser("inspect", help="Read headers and ELF dependencies; never run the artifact")
     inspect_cmd.add_argument("artifact", type=Path)
     plan_cmd = commands.add_parser("plan", help="Explain potential runners; never run software")
     plan_cmd.add_argument("artifact", type=Path)

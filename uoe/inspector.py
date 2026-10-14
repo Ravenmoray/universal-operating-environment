@@ -1,15 +1,17 @@
-"""Bounded, non-executing binary header inspection.
+"""Bounded, non-executing binary header and ELF dependency inspection.
 
 This is not a security boundary. It identifies formats, not application
-compatibility. Dependency enumeration and packed/embedded programs remain out
-of scope for v0.1.
+compatibility. ELF observations cover direct program-header dependencies only.
 """
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import stat
 import struct
+
+from .elf import ElfError, inspect_dependencies
 
 HEADER_LIMIT = 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -36,8 +38,7 @@ def _inspect_elf(data: bytes):
     machine = struct.unpack_from(endian + "H", data, 18)[0]
     return ("ELF", ARCH.get(machine, f"unknown:{machine}"),
             32 if cls == 1 else 64, "little" if order == 1 else "big",
-            "linux-or-unix", ["ELF OS ABI, interpreter, DT_NEEDED and "
-                              "runtime library requirements not yet resolved"])
+            "linux-or-unix", [])
 
 
 def _inspect_pe(data: bytes):
@@ -100,11 +101,34 @@ def inspect_file(path: str | Path) -> dict:
     if info.st_size < 4:
         raise InspectionError("file too small to identify")
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    dependency_scan = {"status": "not_implemented", "dependencies": [],
+                       "scope": "dependency extraction is implemented for ELF only"}
+    # O_NONBLOCK prevents a path replaced with a FIFO from blocking at open on
+    # POSIX. Recheck the opened descriptor rather than trusting the earlier stat.
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_FILE_BYTES:
+            raise InspectionError("only bounded regular files are supported")
         header = handle.read(HEADER_LIMIT)
         digest.update(header)
+        total = len(header)
         for block in iter(lambda: handle.read(1024 * 1024), b""):
+            total += len(block)
+            if total > MAX_FILE_BYTES:
+                raise InspectionError("file exceeds 2 GiB inspection limit")
             digest.update(block)
+        if header.startswith(b"\x7fELF"):
+            try:
+                dependency_scan = inspect_dependencies(handle, before.st_size)
+            except ElfError as exc:
+                raise InspectionError(str(exc)) from exc
+        after = os.fstat(handle.fileno())
+        if (total != before.st_size or
+                (before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+                (after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            raise InspectionError("artifact changed during inspection")
+        info = before
 
     if header.startswith(b"\x7fELF"):
         parser = _inspect_elf
@@ -123,8 +147,13 @@ def inspect_file(path: str | Path) -> dict:
         raise InspectionError("unrecognized executable format")
 
     binary_format, arch, bits, endian, family, unknowns = parser(header)
+    if binary_format == "ELF":
+        unknowns = ["ELF OS ABI compatibility, dynamic loading (dlopen), transitive dependencies, symbol versions, "
+                    "library search paths and runtime behavior remain unresolved"]
+        if dependency_scan["status"] != "complete_static":
+            unknowns.append("ELF object type is outside dependency inspection scope")
     return {
-        "schema_version": "uoe.inspection.v0.1",
+        "schema_version": "uoe.inspection.v0.3",
         "artifact": {
             "path": str(path.resolve()),
             "sha256": digest.hexdigest(),
@@ -138,7 +167,8 @@ def inspect_file(path: str | Path) -> dict:
             "ecosystem_hint": family,
         },
         "evidence": ["binary magic and format-specific header fields"],
-        "static_dependencies": [],
+        "static_dependencies": dependency_scan["dependencies"],
+        "dependency_scan": {k: v for k, v in dependency_scan.items() if k != "dependencies"},
         "unknowns": unknowns,
         "execution_attempted": False,
     }

@@ -20,7 +20,9 @@ def elf(machine=62, endian="<", bits=64):
     blob[0:4] = b"\x7fELF"
     blob[4] = 2 if bits == 64 else 1
     blob[5] = 1 if endian == "<" else 2
-    struct.pack_into(endian + "H", blob, 18, machine)
+    blob[6] = 1
+    struct.pack_into(endian + "HHI", blob, 16, 2, machine, 1)
+    struct.pack_into(endian + "H", blob, 52 if bits == 64 else 40, 64 if bits == 64 else 52)
     return bytes(blob)
 
 
