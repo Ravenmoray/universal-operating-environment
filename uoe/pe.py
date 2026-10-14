@@ -1,6 +1,7 @@
 """Bounded PE32/PE32+ normal imports; no loading, DLL search or execution."""
 import struct
 from .binary_input import BinaryError, Reader
+from .clr import inspect_clr
 
 MAX_DLLS = 256
 MAX_SYMBOLS = 4096
@@ -75,62 +76,85 @@ def inspect_dependencies(stream, file_size):
         return struct.unpack_from('<II', optional, directory_offset + index * 8) if index < directory_count else (0, 0)
 
     unknowns = ['LoadLibrary/GetProcAddress, forwarded exports, API-set resolution, transitive DLLs and runtime behavior remain unresolved']
-    if any(directory(13)):
-        unknowns.append('Delay-import directory present; delay-loaded imports are not enumerated')
-    if any(directory(14)):
-        unknowns.append('CLR directory present; managed assembly references are not enumerated')
-    dependencies = []
-    import_rva, import_size = directory(1)
-    if bool(import_rva) != bool(import_size):
-        raise BinaryError('inconsistent PE import directory')
-    if import_rva:
-        directory_file, _ = locate(import_rva, import_size)
-        terminated = False
-        symbol_count = 0
-        for i in range(min(import_size // 20, MAX_DLLS + 1)):
-            offset = directory_file + i * 20
-            lookup, timestamp, forwarder, dll_rva, iat = struct.unpack('<IIIII', reader.read(offset, 20))
-            if not any((lookup, timestamp, forwarder, dll_rva, iat)):
-                terminated = True
-                break
-            if i == MAX_DLLS:
-                raise BinaryError('PE DLL count limit exceeded')
-            if not dll_rva or not iat:
-                raise BinaryError('incomplete PE import descriptor')
-            dll, dll_offset = name(dll_rva)
-            symbols = []
-            # A bound IAT contains addresses rather than original import names.
-            if not lookup and timestamp:
-                raise BinaryError('bound PE imports without lookup table are unsupported')
-            thunk = lookup or iat
-            width = 8 if wide else 4
-            for j in range(MAX_SYMBOLS + 1):
-                thunk_offset, _ = locate(thunk + j * width, width)
-                value = int.from_bytes(reader.read(thunk_offset, width), 'little')
-                if value == 0:
-                    break
-                symbol_count += 1
-                if symbol_count > MAX_SYMBOLS:
-                    raise BinaryError('PE symbol count limit exceeded')
-                flag = 1 << (width * 8 - 1)
-                if value & flag:
-                    if value & ~(flag | 0xffff):
-                        raise BinaryError('invalid PE ordinal reserved bits')
-                    symbol = {'ordinal': value & 0xffff}
-                else:
-                    if value > 0x7fffffff:
-                        raise BinaryError('invalid PE name RVA reserved bits')
-                    hint_offset, _ = locate(value, 2)
-                    hint = int.from_bytes(reader.read(hint_offset, 2), 'little')
-                    symbol_name, symbol_offset = name(value + 2)
-                    symbol = {'name': symbol_name, 'hint': hint, 'name_file_offset': symbol_offset}
-                symbols.append({**symbol, 'file_offset': thunk_offset})
+    width = 8 if wide else 4
+    counts = {'symbols': 0, 'dlls': 0}
+
+    def symbols(table):
+        """Read one import lookup/name table (zero-terminated thunk array)."""
+        found = []
+        for j in range(MAX_SYMBOLS + 1):
+            thunk_offset, _ = locate(table + j * width, width)
+            value = int.from_bytes(reader.read(thunk_offset, width), 'little')
+            if value == 0:
+                return found
+            counts['symbols'] += 1
+            if counts['symbols'] > MAX_SYMBOLS:
+                raise BinaryError('PE symbol count limit exceeded')
+            flag = 1 << (width * 8 - 1)
+            if value & flag:
+                if value & ~(flag | 0xffff):
+                    raise BinaryError('invalid PE ordinal reserved bits')
+                symbol = {'ordinal': value & 0xffff}
             else:
-                raise BinaryError('unterminated PE import lookup table')
-            dependencies.append({'kind': 'shared_library', 'name': dll, 'status': 'observed',
-                                 'symbols': symbols, 'evidence': {'source': 'PE_IMPORT_DESCRIPTOR',
-                                 'file_offset': offset, 'name_file_offset': dll_offset}})
-        if not terminated:
-            raise BinaryError('unterminated or oversized PE import directory')
+                if value > 0x7fffffff:
+                    raise BinaryError('invalid PE name RVA reserved bits')
+                hint_offset, _ = locate(value, 2)
+                hint = int.from_bytes(reader.read(hint_offset, 2), 'little')
+                symbol_name, symbol_offset = name(value + 2)
+                symbol = {'name': symbol_name, 'hint': hint, 'name_file_offset': symbol_offset}
+            found.append({**symbol, 'file_offset': thunk_offset})
+        raise BinaryError('unterminated PE import lookup table')
+
+    def descriptors(index, entry_size, label):
+        """Yield (file offset, raw fields) for a zero-terminated descriptor array."""
+        rva, size = directory(index)
+        if bool(rva) != bool(size):
+            raise BinaryError(f'inconsistent PE {label} directory')
+        if not rva:
+            return
+        base, _ = locate(rva, size)
+        for i in range(min(size // entry_size, MAX_DLLS + 1)):
+            offset = base + i * entry_size
+            fields = struct.unpack('<' + 'I' * (entry_size // 4), reader.read(offset, entry_size))
+            if not any(fields):
+                return
+            counts['dlls'] += 1
+            if counts['dlls'] > MAX_DLLS:
+                raise BinaryError('PE DLL count limit exceeded')
+            yield offset, fields
+        raise BinaryError(f'unterminated or oversized PE {label} directory')
+
+    dependencies = []
+    for offset, (lookup, timestamp, forwarder, dll_rva, iat) in descriptors(1, 20, 'import'):
+        if not dll_rva or not iat:
+            raise BinaryError('incomplete PE import descriptor')
+        dll, dll_offset = name(dll_rva)
+        # A bound IAT contains addresses rather than original import names.
+        if not lookup and timestamp:
+            raise BinaryError('bound PE imports without lookup table are unsupported')
+        dependencies.append({'kind': 'shared_library', 'name': dll, 'status': 'observed',
+                             'load_kind': 'static', 'symbols': symbols(lookup or iat),
+                             'evidence': {'source': 'PE_IMPORT_DESCRIPTOR',
+                                          'file_offset': offset, 'name_file_offset': dll_offset}})
+    # Delay-load descriptors (IMAGE_DELAYLOAD_DESCRIPTOR): the DLL is loaded on
+    # first call, not at process start. Only the RVA-based form is supported.
+    for offset, (attributes, dll_rva, _, iat, names_rva, _, _, _) in descriptors(13, 32, 'delay-import'):
+        if attributes != 1:
+            raise BinaryError('unsupported PE delay-import descriptor attributes')
+        if not dll_rva or not iat or not names_rva:
+            raise BinaryError('incomplete PE delay-import descriptor')
+        dll, dll_offset = name(dll_rva)
+        dependencies.append({'kind': 'shared_library', 'name': dll, 'status': 'observed',
+                             'load_kind': 'delay', 'symbols': symbols(names_rva),
+                             'evidence': {'source': 'PE_DELAY_IMPORT_DESCRIPTOR',
+                                          'file_offset': offset, 'name_file_offset': dll_offset}})
+    clr_rva, clr_size = directory(14)
+    if bool(clr_rva) != bool(clr_size):
+        raise BinaryError('inconsistent PE CLR directory')
+    if clr_rva:
+        managed, notes = inspect_clr(reader, locate, clr_rva, clr_size)
+        dependencies.extend(managed)
+        unknowns.extend(notes)
     return {'status': 'complete_static', 'dependencies': dependencies, 'unknowns': unknowns,
-            'scope': 'normal PE import descriptors and named/ordinal imports only'}
+            'scope': 'normal and delay-load PE import descriptors with named/ordinal imports, '
+                     'plus CLR header facts, assembly references and module references'}

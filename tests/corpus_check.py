@@ -6,7 +6,8 @@ Files are only read, never executed. Reference tools are optional; a comparison
 is skipped (and counted) when its tool is missing:
 
   ELF     readelf (binutils): NEEDED entries and the program interpreter
-  PE      llvm-readobj --coff-imports: DLL names and imported symbol names
+  PE      llvm-readobj --coff-imports: DLL names, delay-load vs static, imported symbol names;
+          for managed images, dnfile (optional pip package) assembly/module references
   WASM    Node.js WebAssembly.Module.imports (compiles; never instantiates)
   Mach-O  llvm-objdump --macho --dylibs-used --rpaths
 
@@ -32,7 +33,7 @@ from uoe.inspector import InspectionError, inspect_file  # noqa: E402
 
 NODE_SCRIPT = ('const m=new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));'
                'console.log(JSON.stringify(WebAssembly.Module.imports(m)))')
-PE_SUFFIXES = ('.exe', '.dll', '.sys', '.ocx', '.efi')
+PE_SUFFIXES = ('.exe', '.dll', '.pyd', '.sys', '.ocx', '.efi')
 
 
 def group_by_module(rows):
@@ -93,14 +94,48 @@ def reference_pe(path):
     if not shutil.which('llvm-readobj'):
         return None
     out = run(['llvm-readobj', '--coff-imports', str(path)]).stdout
-    blocks = re.findall(r'Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S)
-    return [(name, [n for n, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
-            for name, body in blocks]
+    # Top-level blocks start in column 0; nested "  Import {" entries inside a
+    # DelayImport block are indented and are not separate DLLs.
+    blocks = re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S | re.M)
+    return [('delay' if delay else 'static', name,
+             [n for n, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
+            for delay, name, body in blocks]
 
 
 def observed_pe(report):
-    return [(d['name'], [s['name'] for s in d['symbols'] if 'name' in s])
-            for d in report['static_dependencies']]
+    return [(d['load_kind'], d['name'], [s['name'] for s in d['symbols'] if 'name' in s])
+            for d in report['static_dependencies'] if d['kind'] == 'shared_library']
+
+
+def reference_clr(path):
+    """Managed references via the optional dnfile package (None when not importable)."""
+    try:
+        import dnfile
+    except ImportError:
+        return None
+    import hashlib
+
+    def text(item):
+        return item.value.decode() if isinstance(item.value, bytes) else item.value
+    try:
+        tables = dnfile.dnPE(str(path)).net.mdtables
+    except Exception:
+        return 'rejected'
+    assemblies = []
+    for row in (tables.AssemblyRef.rows if tables.AssemblyRef else []):
+        key = bytes(row.PublicKey.value) if row.PublicKey is not None and row.PublicKey.value else b''
+        token = (hashlib.sha1(key).digest()[-8:][::-1].hex() if row.Flags.afPublicKey else key.hex()) if key else None
+        assemblies.append((text(row.Name), f'{row.MajorVersion}.{row.MinorVersion}.{row.BuildNumber}.{row.RevisionNumber}',
+                           text(row.Culture) or None, token))
+    modules = [text(row.Name) for row in (tables.ModuleRef.rows if tables.ModuleRef else [])]
+    return assemblies, modules
+
+
+def observed_clr(report):
+    deps = report['static_dependencies']
+    return ([(d['name'], d['version'], d['culture'], d['public_key_token'])
+             for d in deps if d['kind'] == 'managed_assembly'],
+            [d['name'] for d in deps if d['kind'] == 'native_module_reference'])
 
 
 def reference_wasm(path):
@@ -172,6 +207,18 @@ def main(argv=None):
         if status in ('partial_static',):
             counts['partial'] += 1
             continue
+        if fmt == 'PE' and any(d['kind'] == 'managed_runtime' for d in report['static_dependencies']):
+            counts['managed'] += 1
+            managed = reference_clr(path)
+            if managed is None:
+                counts['managed_no_reference_tool'] += 1
+            elif managed == 'rejected':
+                counts['managed_reference_also_rejected'] += 1
+            elif managed == observed_clr(report):
+                counts['managed_matched'] += 1
+            else:
+                counts['disagreed'] += 1
+                problems[fmt + ' managed disagreed'].append(str(path))
         reference, observed = COMPARERS[fmt]
         expected = reference(path)
         if expected is None:

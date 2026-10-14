@@ -40,6 +40,21 @@ def fixture(bits=64):
     return blob
 
 
+def with_delay(bits=64, attributes=1):
+    """The base fixture plus one RVA-based delay-load descriptor (and terminator)."""
+    blob = fixture(bits)
+    thunks = '<QQQ' if bits == 64 else '<III'
+    struct.pack_into('<IIIIIIII', blob, 0x300, attributes, 0x1140, 0x11c0, 0x11a0, 0x1160, 0, 0, 0)
+    blob[0x340:0x34c] = b'delayed.dll\0'
+    for table in (0x360, 0x3a0):  # import name table and IAT (identical before binding)
+        struct.pack_into(thunks, blob, table, 0x1180, (1 << (bits - 1)) | 7, 0)
+    struct.pack_into('<H', blob, 0x380, 5)
+    blob[0x382:0x38b] = b'LazyCall\0'
+    directory = 0x98 + (112 if bits == 64 else 96)
+    struct.pack_into('<II', blob, directory + 13 * 8, 0x1100, 64)
+    return blob
+
+
 def scan(data):
     return inspect_dependencies(io.BytesIO(data), len(data))
 
@@ -61,13 +76,84 @@ class PeDependencyTests(unittest.TestCase):
         with self.assertRaisesRegex(BinaryError, 'bound'):
             scan(data)
 
-    def test_delay_and_clr_are_explicit_unknowns(self):
-        data = fixture()
-        for index in (13, 14):
-            struct.pack_into('<II', data, 0x98+112+index*8, 0x1000, 32)
+    def test_delay_imports_are_observed_and_distinguished(self):
+        for bits in (32, 64):
+            with self.subTest(bits=bits):
+                result = scan(with_delay(bits))
+                self.assertFalse(any('Delay-import' in x for x in result['unknowns']))
+                normal, delayed = result['dependencies']
+                self.assertEqual((normal['name'], normal['load_kind']), ('example.dll', 'static'))
+                self.assertEqual((delayed['name'], delayed['load_kind']), ('delayed.dll', 'delay'))
+                self.assertEqual(delayed['symbols'][0]['name'], 'LazyCall')
+                self.assertEqual(delayed['symbols'][0]['hint'], 5)
+                self.assertEqual(delayed['symbols'][1]['ordinal'], 7)
+                self.assertEqual(delayed['evidence']['source'], 'PE_DELAY_IMPORT_DESCRIPTOR')
+                self.assertEqual(delayed['evidence']['file_offset'], 0x300)
+                self.assertEqual(delayed['evidence']['name_file_offset'], 0x340)
+
+    def test_planner_flags_delay_loaded_dlls_as_conditional(self):
+        from uoe.planner import plan_inspection
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'delayed.exe'
+            path.write_bytes(with_delay())
+            report = inspect_file(path)
+        plan = plan_inspection(report, host_os='linux', host_arch='x86_64', available={'wine': True})
+        notes = ' '.join(plan['strategies'][0]['constraints'])
+        self.assertIn('Delay-loaded DLLs', notes)
+        self.assertIn('delayed.dll', notes)
+        self.assertNotIn('example.dll', notes.split('Delay-loaded DLLs')[1])
+        self.assertFalse(plan['strategies'][0]['verified_compatible'])
+
+    def test_delay_only_binaries_have_no_normal_imports(self):
+        data = with_delay()
+        directory = 0x98 + 112
+        struct.pack_into('<II', data, directory + 8, 0, 0)
         result = scan(data)
-        self.assertTrue(any('Delay-import' in x for x in result['unknowns']))
-        self.assertTrue(any('CLR' in x for x in result['unknowns']))
+        self.assertEqual([(d['load_kind'], d['name']) for d in result['dependencies']],
+                         [('delay', 'delayed.dll')])
+
+    def test_malformed_delay_descriptors_are_rejected(self):
+        directory = 0x98 + 112
+        cases = {
+            'va-based attributes': lambda b: struct.pack_into('<I', b, 0x300, 0),
+            'reserved attribute bits': lambda b: struct.pack_into('<I', b, 0x300, 3),
+            'no dll name': lambda b: struct.pack_into('<I', b, 0x304, 0),
+            'no name table': lambda b: struct.pack_into('<I', b, 0x310, 0),
+            'no address table': lambda b: struct.pack_into('<I', b, 0x30c, 0),
+            'directory rva without size': lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 0),
+            'directory size without rva': lambda b: struct.pack_into('<II', b, directory + 13 * 8, 0, 64),
+            'unterminated directory': lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 32),
+            'name outside file': lambda b: struct.pack_into('<I', b, 0x304, 0xfffff000),
+            'name table outside file': lambda b: struct.pack_into('<I', b, 0x310, 0xfffff000),
+            'name table runs off its section': lambda b: (
+                struct.pack_into('<I', b, 0x310, 0x13f8),
+                struct.pack_into('<Q', b, 0x5f8, (1 << 63) | 3)),
+            'ordinal reserved bits': lambda b: struct.pack_into('<Q', b, 0x368, (1 << 63) | (1 << 40) | 7),
+        }
+        for label, mutate in cases.items():
+            data = with_delay()
+            mutate(data)
+            with self.subTest(label), self.assertRaises(BinaryError):
+                scan(data)
+
+    def test_normal_and_delay_imports_share_the_symbol_and_dll_budgets(self):
+        from unittest.mock import patch
+        import uoe.pe as pe
+        data = with_delay()
+        self.assertEqual(len(scan(data)['dependencies']), 2)  # 2 + 2 symbols, 2 DLLs
+        with patch.object(pe, 'MAX_SYMBOLS', 3), self.assertRaisesRegex(BinaryError, 'symbol count'):
+            scan(data)
+        with patch.object(pe, 'MAX_DLLS', 1), self.assertRaisesRegex(BinaryError, 'DLL count'):
+            scan(data)
+
+    def test_clr_directory_is_decoded_not_just_flagged(self):
+        # A CLR directory smaller than an IMAGE_COR20_HEADER cannot be a managed image;
+        # it is now rejected rather than reported as an unenumerated unknown. Positive
+        # cases and malformed metadata are covered in test_clr_dependencies.py.
+        data = fixture()
+        struct.pack_into('<II', data, 0x98 + 112 + 14 * 8, 0x1000, 32)
+        with self.assertRaisesRegex(BinaryError, 'CLR'):
+            scan(data)
 
     def test_bad_ranges_and_missing_terminators(self):
         for offset, fmt, value in [(60,'<I',0xffffffff), (0x86,'<H',97), (0x98+108,'<I',100),
@@ -90,15 +176,15 @@ class PeDependencyTests(unittest.TestCase):
             scan(data)
 
     def test_every_truncation(self):
-        data = fixture()
-        for end in range(len(data)):
-            with self.subTest(end=end), self.assertRaises(BinaryError):
-                scan(data[:end])
+        for data in (fixture(), with_delay(), with_delay(32)):
+            for end in range(len(data)):
+                with self.subTest(size=len(data), end=end), self.assertRaises(BinaryError):
+                    scan(data[:end])
 
     def test_seeded_mutations(self):
         rng = random.Random(25)
-        for _ in range(1000):
-            data = fixture(rng.choice((32,64)))
+        for _ in range(2000):
+            data = rng.choice((fixture, with_delay))(rng.choice((32,64)))
             for _ in range(rng.randint(1,4)):
                 data[rng.randrange(len(data))] = rng.randrange(256)
             try:
@@ -106,6 +192,8 @@ class PeDependencyTests(unittest.TestCase):
             except BinaryError:
                 continue
             self.assertLessEqual(len(result['dependencies']), 256)
+            for dependency in result['dependencies']:
+                self.assertIn(dependency['load_kind'], ('static', 'delay'))
 
     @unittest.skipUnless(shutil.which('objdump'), 'requires GNU objdump')
     def test_synthetic_fixture_matches_objdump(self):
@@ -118,6 +206,53 @@ class PeDependencyTests(unittest.TestCase):
                 self.assertEqual(re.findall(r'DLL Name: (.*)', output), ['example.dll'])
                 self.assertIn('DoWork', output)
                 self.assertEqual(inspect_file(path)['static_dependencies'][0]['symbols'][0]['name'], 'DoWork')
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ('clang', 'lld-link', 'llvm-dlltool', 'llvm-readobj')),
+                         'requires clang, lld-link, llvm-dlltool and llvm-readobj')
+    def test_linked_delay_load_images_match_llvm_readobj(self):
+        # Project-owned source linked with LLVM's COFF linker against import
+        # libraries generated from .def files: no Windows SDK, nothing is executed.
+        source = (
+            '__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId(void);\n'
+            '__declspec(dllimport) void __stdcall ExitProcess(unsigned int);\n'
+            '__declspec(dllimport) int __stdcall MessageBoxA(void*, const char*, const char*, unsigned);\n'
+            '__declspec(dllimport) void* __stdcall GetDesktopWindow(void);\n'
+            'void* __delayLoadHelper2(void* a, void* b) { (void)a; (void)b; return 0; }\n'
+            'int mainCRTStartup(void) {\n'
+            '  MessageBoxA(GetDesktopWindow(), "x", "y", GetCurrentProcessId());\n'
+            '  ExitProcess(0);\n  return 0;\n}\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'main.c').write_text(source)
+            (root / 'kernel32.def').write_text('LIBRARY kernel32.dll\nEXPORTS\nGetCurrentProcessId\nExitProcess\n')
+            (root / 'user32.def').write_text('LIBRARY user32.dll\nEXPORTS\nMessageBoxA\nGetDesktopWindow\n')
+            for machine, target in (('i386:x86-64', 'x86_64-pc-windows-msvc'), ('arm64', 'aarch64-pc-windows-msvc')):
+                tag = machine.split(':')[0]
+                steps = [
+                    ['llvm-dlltool', '-m', machine, '-d', str(root / 'kernel32.def'), '-l', str(root / f'k32_{tag}.lib')],
+                    ['llvm-dlltool', '-m', machine, '-d', str(root / 'user32.def'), '-l', str(root / f'u32_{tag}.lib')],
+                    ['clang', f'--target={target}', '-c', '-O1', '-fno-stack-protector',
+                     str(root / 'main.c'), '-o', str(root / f'main_{tag}.obj')],
+                    ['lld-link', '/nodefaultlib', '/subsystem:console', '/entry:mainCRTStartup',
+                     f'/out:{root / ("delay_" + tag + ".exe")}', str(root / f'main_{tag}.obj'),
+                     str(root / f'k32_{tag}.lib'), str(root / f'u32_{tag}.lib'), '/delayload:user32.dll'],
+                ]
+                for step in steps:
+                    done = subprocess.run(step, capture_output=True, text=True, timeout=60)
+                    if done.returncode:
+                        self.skipTest(f'LLVM cannot build {target} PE here: ' + done.stderr[-200:])
+                exe = root / f'delay_{tag}.exe'
+                report = inspect_file(exe)
+                reference = subprocess.run(['llvm-readobj', '--coff-imports', str(exe)], check=True,
+                                           capture_output=True, text=True, timeout=30).stdout
+                expected = [('delay' if kind else 'static', name)
+                            for kind, name in re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n', reference, re.M)]
+                self.assertEqual([(d['load_kind'], d['name']) for d in report['static_dependencies']], expected)
+                self.assertEqual(expected, [('static', 'kernel32.dll'), ('delay', 'user32.dll')])
+                delayed = report['static_dependencies'][1]
+                self.assertEqual(sorted(x['name'] for x in delayed['symbols']),
+                                 ['GetDesktopWindow', 'MessageBoxA'])
+                self.assertFalse(report['execution_attempted'])
 
     @unittest.skipUnless(shutil.which('x86_64-w64-mingw32-gcc'), 'requires MinGW (main CI)')
     def test_compiled_missing_dll_matches_objdump(self):
