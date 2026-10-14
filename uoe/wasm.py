@@ -150,7 +150,7 @@ def inspect_dependencies(stream, file_size):
         raise BinaryError('unsupported WebAssembly header or version')
 
     position, rank, sections = 8, 0, 0
-    import_section, dynamic_linking = None, False
+    import_section, dynamic_linking, linker_sections = None, False, False
     while position < file_size:
         sections += 1
         if sections > MAX_SECTIONS:
@@ -175,6 +175,7 @@ def inspect_dependencies(stream, file_size):
                 except UnicodeDecodeError as exc:
                     raise BinaryError('non-UTF-8 WASM custom section name') from exc
                 dynamic_linking = dynamic_linking or label in DYNAMIC_LINKING_SECTIONS
+                linker_sections = linker_sections or label == 'linking' or label.startswith('reloc.')
         else:
             if SECTION_ORDER[section_id] <= rank:
                 raise BinaryError('WASM sections are duplicated or out of order')
@@ -223,8 +224,12 @@ def inspect_dependencies(stream, file_size):
     if dynamic_linking:
         unknowns.append('Dynamic-linking custom section present; side-module '
                         'dependencies are not enumerated')
+    if linker_sections:
+        unknowns.append("A 'linking' or 'reloc.*' custom section is present: this may be an "
+                        'unlinked relocatable object, whose imports are linker placeholders '
+                        'rather than requirements of an embedder')
     return {'status': 'complete_static', 'dependencies': list(modules.values()),
             'unknowns': unknowns, 'section_count': sections, 'import_count': total,
-            'dynamic_linking_section': dynamic_linking,
+            'dynamic_linking_section': dynamic_linking, 'linker_sections': linker_sections,
             'scope': 'core module section framing and import section only; '
                      'no compilation, instantiation or execution'}

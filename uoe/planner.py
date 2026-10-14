@@ -42,9 +42,16 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
             "verified_compatible": False,
         })
 
+    scan_status = inspection.get("dependency_scan", {}).get("status")
     if fmt == "ELF":
-        add("native", host_os == "linux" and same_arch,
-            "Linux ELF native loader may work only with a matching architecture and OS ABI",
+        # Relocatable objects and separate debug files (scan not complete) are not
+        # launchable images, however well their headers match the host.
+        scanned = scan_status == "complete_static"
+        add("native", scanned and host_os == "linux" and same_arch,
+            "Linux ELF native loader may work only with a matching architecture and OS ABI"
+            if scanned else
+            "Not offered: the ELF scan did not complete (" + str(scan_status) +
+            "), so this is not a launchable executable or shared object",
             ["Observed interpreter/library names still require host resolution and behavioral tests"])
     elif fmt == "PE":
         if host_os == "windows":
@@ -76,16 +83,32 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
         add("wasmtime", bool(runtimes.get("wasmtime", False)),
             "Wasmtime can execute compatible WebAssembly components or modules",
             constraints)
-    elif fmt == "Mach-O":
-        add("native", host_os == "darwin" and same_arch,
-            "Native Apple loader may support the Mach-O binary",
+    elif fmt in ("Mach-O", "Mach-O-fat"):
+        slices = inspection.get("dependency_scan", {}).get("slices", [])
+        platforms = {}
+        for dep in inspection.get("static_dependencies", []):
+            if dep["kind"] == "platform":
+                platforms.setdefault(dep.get("slice", {}).get("index", 0), []).append(dep["name"])
+
+        def launchable(image):
+            """A decoded executable for the host architecture on a macOS platform."""
+            if (image["architecture"] != host_arch or image["status"] != "complete_static"
+                    or image["file_type"] != "executable"):
+                return False
+            names = platforms.get(image.get("index", 0))
+            return not names or bool({"macos", "maccatalyst"} & set(names))
+        ready = any(launchable(image) for image in slices)
+        listing = ", ".join(binary.get("slice_architectures") or [arch]) or "none enumerated"
+        add("native", host_os == "darwin" and ready,
+            "Native Apple loader may support "
+            + ("a slice of this universal binary" if fmt == "Mach-O-fat" else "the Mach-O binary")
+            if host_os != "darwin" or ready else
+            "Not offered: no decoded executable image for this host architecture and a macOS "
+            "platform (dylibs, bundles, objects and other-platform images are not launched this way)",
+            ["Slice architectures: " + listing,
+             "Frameworks, code signing and entitlements still unknown"]
+            if fmt == "Mach-O-fat" else
             ["Frameworks, code signing and entitlements still unknown"])
-    elif fmt == "Mach-O-fat":
-        slices = binary.get("slice_architectures", [])
-        add("native", host_os == "darwin" and host_arch in slices,
-            "Native Apple loader may support a slice of this universal binary",
-            ["Slice architectures: " + (", ".join(slices) or "none enumerated"),
-             "Frameworks, code signing and entitlements still unknown"])
 
     return {
         "schema_version": "uoe.plan.v0.1",

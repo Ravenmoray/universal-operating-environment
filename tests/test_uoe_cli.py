@@ -177,6 +177,20 @@ class UoeTests(unittest.TestCase):
             r = plan_inspection(scanned, host_os=host_os, host_arch=host_arch)
             self.assertEqual(r["status"], "unresolved", (host_os, host_arch))
 
+    def test_elf_objects_and_debug_files_are_never_native_candidates(self):
+        relocatable = bytearray(elf())
+        struct.pack_into("<H", relocatable, 16, 1)  # ET_REL
+        report = inspect_file(self.make(bytes(relocatable)))
+        self.assertEqual(report["dependency_scan"]["status"], "unsupported_object_type")
+        for host in ("linux",):
+            plan = plan_inspection(report, host_os=host, host_arch="x86_64")
+            self.assertEqual(plan["strategies"][0]["state"], "unavailable")
+            self.assertEqual(plan["status"], "unresolved")
+            self.assertIn("did not complete", plan["strategies"][0]["reason"])
+        # a normal executable header with the same machine is still a candidate
+        ok = plan_inspection(inspect_file(self.make(elf())), host_os="linux", host_arch="x86_64")
+        self.assertEqual(ok["strategies"][0]["state"], "candidate")
+
     def test_static_operations_do_not_launch_programs(self):
         with patch.object(subprocess, "run", side_effect=AssertionError("execution attempted")):
             p = self.make(pe())

@@ -356,6 +356,92 @@ class MachoDependencyTests(unittest.TestCase):
         self.assertTrue(any('@rpath' in x for x in report['unknowns']))
         self.assertFalse(report['execution_attempted'])
 
+    def plan_for(self, data, host_arch='x86_64', host_os='darwin'):
+        report = inspect_file(self.write(data))
+        return report, plan_inspection(report, host_os=host_os, host_arch=host_arch)
+
+    def test_planner_offers_native_only_for_a_decoded_macos_executable(self):
+        launchable = {
+            'macOS executable': thin(commands=[build_version('<', platform=1)]),
+            'Mac Catalyst executable': thin(commands=[build_version('<', platform=6)]),
+            'executable without platform info': thin(commands=[]),
+        }
+        for label, data in launchable.items():
+            with self.subTest(label):
+                _, plan = self.plan_for(data)
+                self.assertEqual(plan['strategies'][0]['state'], 'candidate')
+        not_launchable = {
+            'dylib': thin(file_type=6),
+            'bundle': thin(file_type=8),
+            'relocatable object': thin(file_type=1),
+            'iOS executable': thin(commands=[build_version('<', platform=2)]),
+            'watchOS executable': thin(commands=[build_version('<', platform=4)]),
+            'iOS simulator executable': thin(commands=[build_version('<', platform=7)]),
+            'legacy iOS version-min': thin(commands=[version_min('<', 0x25, 0x100000, 0x100000)]),
+        }
+        for label, data in not_launchable.items():
+            with self.subTest(label):
+                _, plan = self.plan_for(data)
+                self.assertEqual(plan['strategies'][0]['state'], 'unavailable')
+                self.assertEqual(plan['status'], 'unresolved')
+                self.assertFalse(plan['strategies'][0]['verified_compatible'])
+
+    def test_planner_requires_a_decoded_executable_slice_for_the_host(self):
+        both = fat([(X86_64, 3, thin()), (ARM64, 0, thin(cpu=ARM64))])
+        for host_arch, expected in (('x86_64', 'candidate'), ('arm64', 'candidate'), ('i386', 'unavailable')):
+            self.assertEqual(self.plan_for(both, host_arch)[1]['strategies'][0]['state'], expected, host_arch)
+        # the host-matching slice is only an object file: nothing launchable for this host
+        mixed = fat([(X86_64, 3, thin()), (ARM64, 0, thin(cpu=ARM64, file_type=1))])
+        self.assertEqual(self.plan_for(mixed, 'x86_64')[1]['strategies'][0]['state'], 'candidate')
+        self.assertEqual(self.plan_for(mixed, 'arm64')[1]['strategies'][0]['state'], 'unavailable')
+        # a dylib slice for the host architecture is not launchable either
+        library = fat([(X86_64, 3, thin(file_type=6))])
+        self.assertEqual(self.plan_for(library, 'x86_64')[1]['strategies'][0]['state'], 'unavailable')
+        # platform is judged per slice
+        platforms = fat([(X86_64, 3, thin(commands=[build_version('<', platform=1)])),
+                         (ARM64, 0, thin(cpu=ARM64, commands=[build_version('<', platform=2)]))])
+        self.assertEqual(self.plan_for(platforms, 'x86_64')[1]['strategies'][0]['state'], 'candidate')
+        self.assertEqual(self.plan_for(platforms, 'arm64')[1]['strategies'][0]['state'], 'unavailable')
+
+    def test_unsupported_images_and_slices_say_so_in_unknowns(self):
+        report, _ = self.plan_for(thin(file_type=1))
+        self.assertEqual(report['dependency_scan']['status'], 'unsupported_object_type')
+        self.assertTrue(any('file type unsupported:1' in x for x in report['unknowns']))
+        report, plan = self.plan_for(fat([(X86_64, 3, thin()), (ARM64, 0, thin(cpu=ARM64, file_type=1))]))
+        self.assertEqual(report['dependency_scan']['status'], 'partial_static')
+        self.assertTrue(any('slice 1 (aarch64)' in x for x in report['unknowns']))
+        self.assertTrue(any('slice 1 (aarch64)' in x for x in plan['unresolved']))
+        self.assertFalse(any('slice 0' in x for x in report['unknowns']))
+
+    def test_universal_file_of_only_unsupported_slices_is_unsupported_not_partial(self):
+        data = fat([(X86_64, 3, thin(file_type=1)), (ARM64, 0, thin(cpu=ARM64, file_type=1))])
+        result = scan(data)
+        self.assertEqual((result['status'], result['dependencies']), ('unsupported_object_type', []))
+        self.assertEqual(sum('outside dependency inspection scope' in x for x in result['unknowns']), 2)
+
+    def test_build_version_and_version_min_sizes_are_validated(self):
+        short = struct.pack('<IIIIII', 0x32, 24, 1, 0x0d0000, 0x0e0000, 5)  # claims 5 tools, has room for 0
+        with self.assertRaisesRegex(BinaryError, 'tool list'):
+            scan(thin(commands=[short]))
+        with_tool = struct.pack('<IIIIII', 0x32, 32, 1, 0x0d0000, 0x0e0000, 1) + struct.pack('<II', 3, 0x10000)
+        self.assertEqual(scan(thin(commands=[with_tool]))['dependencies'][0]['name'], 'macos')
+        padded = struct.pack('<IIII', 0x24, 24, 0x0a0f00, 0x0a1000) + bytes(8)
+        with self.assertRaisesRegex(BinaryError, 'version-min'):
+            scan(thin(commands=[padded]))
+
+    def test_cpu_labels_are_complete_for_common_apple_types(self):
+        for cpu, label in ((0x0200000c, 'arm64_32'), (18, 'ppc'), (0x01000012, 'ppc64'),
+                           (0x01000099, 'unknown:0x1000099')):
+            self.assertEqual(scan(thin(cpu=cpu, file_type=1))['slices'][0]['architecture'], label)
+
+    def test_fat_error_messages_name_the_real_problem(self):
+        java = b'\xca\xfe\xba\xbe\x00\x00\x00\x34' + bytes(200)
+        with self.assertRaisesRegex(BinaryError, 'Java class'):
+            scan(java)
+        archive = fat([(X86_64, 3, b'!<arch>\n' + bytes(64))])
+        with self.assertRaisesRegex(BinaryError, r'slice 0 is not a Mach-O image .*archive'):
+            scan(archive)
+
     def test_inspector_and_planner_for_universal_binary(self):
         report = inspect_file(self.write(fat([(X86_64, 3, thin()), (ARM64, 0, thin(cpu=ARM64))])))
         self.assertEqual(report['binary']['format'], 'Mach-O-fat')

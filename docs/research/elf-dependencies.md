@@ -24,7 +24,11 @@ complete requirements discovery or a valid executable. Relocatable objects have
 `unsupported_object_type`. A `PT_INTERP` or `PT_DYNAMIC` segment whose file size is
 zero — the shape of a separate debug file made with `objcopy --only-keep-debug` — has
 no content to observe, so the scan is `partial_static` with the reason in `unknowns`
-rather than an error or an invented empty result. Dynamic loading,
+rather than an error or an invented empty result. Such a segment keeps its original
+`p_offset` even though it has no content, and that offset may lie beyond the end of the
+much smaller debug file, so segments with a zero file size are not range-checked
+against the file. `plan` does not offer a native strategy for a `partial_static` or
+`unsupported_object_type` ELF file: it is not a launchable image. Dynamic loading,
 transitive libraries, symbol versions, OS ABI compatibility and runtime behavior
 remain explicit unknowns. The original demo loads its project library via dlopen;
 that requirement correctly remains declared rather than statically discovered.

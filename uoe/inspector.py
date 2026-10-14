@@ -15,7 +15,7 @@ import struct
 
 from .elf import ElfError, inspect_dependencies
 from .binary_input import BinaryError
-from .macho import CPU_ARCH as MACH_ARCH, MAGICS as MACH_MAGICS
+from .macho import MAGICS as MACH_MAGICS, architecture as mach_architecture
 from .macho import inspect_dependencies as inspect_macho_dependencies
 from .pe import inspect_dependencies as inspect_pe_dependencies
 from .wasm import inspect_dependencies as inspect_wasm_dependencies
@@ -85,7 +85,7 @@ def _inspect_mach(data: bytes):
     endian, bits = formats[magic]
     _need(data, 0, 8)
     cpu = struct.unpack_from(endian + "I", data, 4)[0]
-    return ("Mach-O", MACH_ARCH.get(cpu, f"unknown:{cpu}"), bits,
+    return ("Mach-O", mach_architecture(cpu), bits,
             "little" if endian == "<" else "big", "apple", [])
 
 
@@ -159,7 +159,7 @@ def inspect_file(path: str | Path) -> dict:
                     "library search paths and runtime behavior remain unresolved"]
         unknowns.extend(dependency_scan.get("unknowns", []))
     else:
-        unknowns = dependency_scan["unknowns"]
+        unknowns = dependency_scan.get("unknowns", [])
     binary = {
         "format": binary_format,
         "architecture": arch,

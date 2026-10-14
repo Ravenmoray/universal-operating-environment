@@ -28,25 +28,41 @@ line for dylibs; the comparison tooling accounts for that.)
 **Universal binaries.** The big-endian `FAT_MAGIC`/`FAT_MAGIC_64` tables are decoded,
 every slice is bounds-checked and aligned to its declared boundary, and each slice
 must begin with a thin Mach-O magic whose CPU type/subtype matches the fat table.
-`binary.slice_architectures` lists the slice architectures in file order,
+`binary.slice_architectures` lists the slice architectures in fat-table order,
 `dependency_scan.slices` holds each slice's CPU type/subtype, file type, offset, size and
 status, and every dependency carries `slice: {index, architecture}`. `plan` offers a
-native candidate on macOS only when a slice matches the host architecture; it does not
-model Rosetta or any other translation.
+native candidate only on a macOS host and only when a **decoded executable** slice (or
+thin image) matches the host architecture and, where a platform load command was
+observed, that platform is `macos` or `maccatalyst`. Dylibs, bundles, object files,
+undecoded slices and iOS/tvOS/watchOS/simulator/DriverKit images are therefore not
+offered; Rosetta and other translation are not modeled.
 
 Scan status: `complete_static`; `unsupported_object_type` (relocatable objects, core
 files, debug companions and other types outside the list above — their commands are
-not decoded); `partial_static` (a universal binary where some slices are
-unsupported); `unsupported_fat_byte_order` (the nonstandard byte-swapped
+not decoded — and also a universal binary *all* of whose slices are such);
+`partial_static` (a universal binary where some, but not all, slices are
+unsupported). Every unsupported image or slice adds an entry to `unknowns` naming the
+slice index, architecture and file type; `unsupported_fat_byte_order` (the nonstandard byte-swapped
 `be ba fe ca` spelling, which is classified but not decoded).
 
-## Behavior change in this increment
+## Behavior changes in this increment
 
-Previously any file beginning `ca fe ba be` was reported as `Mach-O-fat` from its
-8-byte header alone. A universal binary must now contain a valid slice table with
-in-bounds, non-overlapping slices that each start with a Mach-O magic, so a bare
-header — and Java class files, which share the `0xCAFEBABE` magic — are rejected with
-a clear error.
+Compared with the earlier magic-number-only classification:
+
+- **Universal binaries.** Previously any file beginning `ca fe ba be` was reported as
+  `Mach-O-fat` from its 8-byte header alone. A universal binary must now contain a
+  valid slice table with in-bounds, non-overlapping slices that each start with a Mach-O
+  magic. Rejected as a result: a bare 8-byte header ("binary range outside file"); a
+  Java class file, which shares the `0xCAFEBABE` magic (the error says so); and a
+  universal file whose slices are **static archives** made by `lipo -create libx.a ...`
+  (the error names the slice and says it is not a Mach-O image).
+- **Thin images.** A thin Mach-O shorter than its header is rejected ("truncated
+  Mach-O header").
+- **Unrelated formats.** A WebAssembly file whose bytes after the 8-byte header are not
+  valid sections is likewise rejected ("truncated WASM integer" and similar).
+
+All of these inputs are invalid or out of scope; the point is that a recognized magic
+number alone no longer produces a report.
 
 ## Bounds and rejections
 

@@ -47,8 +47,15 @@ never a compatibility verdict.
   payloads. No validation beyond what finding the imports requires.
 - Section ids above 13, duplicated or out-of-order non-custom sections, a section
   that overruns the file, LEB128 integers longer than their width allows or
-  exceeding it, non-UTF-8 names, and trailing bytes in the import section all fail
-  with an explicit error. (Legal padded LEB128 forms are accepted.)
+  exceeding it, non-UTF-8 import names, non-UTF-8 custom-section names of up to 64
+  bytes (longer custom-section names are length-checked but not decoded), and trailing
+  bytes in the import section all fail with an explicit error. (Legal padded LEB128
+  forms are accepted.)
+- A `linking` or `reloc.*` custom section sets `dependency_scan.linker_sections` and adds
+  an unknown: the file may be an **unlinked relocatable object** (for example `clang -c`
+  output), whose imports are linker placeholders rather than requirements of an
+  embedder. It is not reclassified, because a fully linked module built with
+  `--emit-relocs` keeps those sections and has real imports.
 - Import encodings handled: function/table/memory/global/tag; limits flags 0–7
   (maximum, shared, 64-bit index); numeric and vector value types; reference types
   including the abstract heap shorthands and typed `(ref [null] $t)` forms from the
