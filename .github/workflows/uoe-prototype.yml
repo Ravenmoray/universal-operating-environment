@@ -72,7 +72,7 @@ jobs:
           python3 tests/fuzz_differential.py wasm --seed 101 --count 5000
           python3 tests/fuzz_differential.py macho --seed 101 --count 1000
       - name: Compare extraction with readelf on the runner's own ELF files
-        run: python3 tests/corpus_check.py /usr/bin --limit 400
+        run: python3 tests/corpus_check.py /usr/bin --limit 400 --fail-on-reject
 
   controlled-demo:
     # Never execute C files from an untrusted pull_request checkout.

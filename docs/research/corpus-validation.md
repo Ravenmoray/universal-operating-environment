@@ -88,6 +88,9 @@ Recorded because the failures are as informative as the passes.
 2. **Separate debug files raised errors.** 273 of the first 3,000 files had
    `PT_DYNAMIC`/`PT_INTERP` with zero file size (`objcopy --only-keep-debug`). They now
    produce `partial_static` with an explicit unknown instead of an error or a guess.
+   **This fix was incomplete when first written** (see the audit section below): it
+   handled zero-size segments but still rejected debug files whose segment offsets lie
+   beyond the end of the file, which is what `objcopy --only-keep-debug` normally produces.
 3. **WASM GC/exception-handling reference types were rejected.** The differential fuzz
    found modules V8 accepts (tables/globals of `anyref`, `exnref`, `nofunc`, typed
    `(ref null $t)`) that the first WASM decoder refused. Decoder extended; cases are
@@ -99,6 +102,41 @@ requirement); `llvm-readobj` prints `Symbol: Name (hint)`; and Python's
 `str.splitlines()` splits on `0x1c`–`0x1e`, which broke a fuzz comparison on a path
 containing mutated control characters. The first Mach-O comparison also double-counted
 because `/lib` is a symlink to `/usr/lib`; the script now de-duplicates by inode.
+
+## Independent audit of the merged change
+
+After the WebAssembly/Mach-O change merged, an independent adversarial review of the
+merged code was run with separate reviewers for WASM correctness, Mach-O correctness
+and ELF/integration regressions. Their findings were treated as claims to reproduce, not
+as facts. Reproduced and fixed:
+
+- **The ELF debug-file fix above was incomplete** (the most serious). A file made the
+  ordinary way — `gcc -s hello.c; objcopy --only-keep-debug` — was still rejected with
+  "ELF segment outside file". For 150 debug files made from `/usr/bin`, 33 were
+  rejected; after the fix, 149 are `partial_static` and 1 (a static Go binary) is
+  `complete_static`. The corpus run missed it because its debug files happened to have
+  offsets inside the file; the lesson is that the corpus is not the spec.
+- **`plan` ignored the scan outcome.** ELF debug files and relocatable objects, Mach-O
+  dylibs, bundles, objects, and iOS/watchOS/simulator images all still received a
+  "native candidate". `plan` now requires a completed scan, and for Mach-O a decoded
+  executable on a macOS platform.
+- Mach-O: unsupported images and slices left no trace in `unknowns`; a universal file of
+  only unsupported slices was `partial_static`; `LC_BUILD_VERSION`/`LC_VERSION_MIN_*`
+  sizes were not validated (`llvm-objdump` rejects them); `arm64_32`, PowerPC and
+  unknown CPU types were labelled with decimal junk; two behavior changes were
+  undocumented and two error messages did not say what was wrong.
+- WASM: a possible unlinked relocatable object looked like any other module.
+- Tooling: `corpus_check.py` could not fail on wrongly rejected files (so CI would have
+  stayed green with the string-table bug) — it now has `--fail-on-reject`, used on the
+  CI runner's own binaries, where a real run compared 400 of 400 files with no
+  rejections; the Mach-O fuzzer reported false disagreements for names containing a
+  newline and for dylib `--seed-file` inputs; and the WASM comparisons sorted imports,
+  hiding order and grouping errors (they now compare in order: 1,074 mutated modules and
+  all three real modules still agree with V8).
+
+Reported but not changed, as deliberate or out of scope: `cpu_subtype`
+(`arm64e`/`x86_64h`) is not part of the architecture label, and the legacy iOS
+version-min command cannot distinguish the simulator.
 
 ## What this does and does not show
 

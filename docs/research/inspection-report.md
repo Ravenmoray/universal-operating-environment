@@ -27,8 +27,8 @@ report is a set of *observations with file offsets*, not a compatibility verdict
 | Status | Meaning |
 | --- | --- |
 | `complete_static` | The documented scan for this format finished. It does **not** mean the file is valid or that requirements are complete. |
-| `partial_static` | The scan finished but part of the content could not be observed: an ELF `PT_INTERP`/`PT_DYNAMIC` with no file content (typically a separate debug file), or a universal Mach-O with some unsupported slices. The reason is in `unknowns`. |
-| `unsupported_object_type` | A valid header whose object type is outside the scan (ELF relocatable objects; Mach-O objects and other non-executable file types). No dependencies are invented. |
+| `partial_static` | The scan finished but part of the content could not be observed: an ELF `PT_INTERP`/`PT_DYNAMIC` with no file content (typically a separate debug file), or a universal Mach-O with some unsupported slices. The reason is in `unknowns` (for Mach-O, one entry per unsupported slice). |
+| `unsupported_object_type` | A valid header whose object type is outside the scan (ELF relocatable objects; Mach-O objects and other non-executable file types, including a universal binary whose slices are all such). No dependencies are invented, and `plan` does not offer a launch strategy for it. |
 | `unsupported_fat_byte_order` | Mach-O universal header in the nonstandard byte-swapped spelling; classified but not decoded. |
 | `not_implemented` | Reserved for formats without a dependency parser. |
 
