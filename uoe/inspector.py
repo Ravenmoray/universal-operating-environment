@@ -14,6 +14,7 @@ import struct
 from .elf import ElfError, inspect_dependencies
 from .binary_input import BinaryError
 from .pe import inspect_dependencies as inspect_pe_dependencies
+from .wasm import inspect_dependencies as inspect_wasm_dependencies
 
 HEADER_LIMIT = 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -65,7 +66,7 @@ def _inspect_wasm(data: bytes):
     _need(data, 0, 8)
     if data[4:8] != b"\x01\x00\x00\x00":
         raise InspectionError("unsupported WebAssembly binary version")
-    return ("WASM", "wasm32", 32, "little", "wasm",
+    return ("WASM", "wasm", None, "little", "wasm",
             ["WASM imports and required WASI interfaces not yet enumerated"])
 
 
@@ -130,6 +131,11 @@ def inspect_file(path: str | Path) -> dict:
                 dependency_scan = inspect_pe_dependencies(handle, before.st_size)
             except BinaryError as exc:
                 raise InspectionError(str(exc)) from exc
+        elif header.startswith(b"\x00asm"):
+            try:
+                dependency_scan = inspect_wasm_dependencies(handle, before.st_size)
+            except BinaryError as exc:
+                raise InspectionError(str(exc)) from exc
         after = os.fstat(handle.fileno())
         if (total != before.st_size or
                 (before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
@@ -159,7 +165,7 @@ def inspect_file(path: str | Path) -> dict:
                     "library search paths and runtime behavior remain unresolved"]
         if dependency_scan["status"] != "complete_static":
             unknowns.append("ELF object type is outside dependency inspection scope")
-    if binary_format == "PE":
+    if binary_format in ("PE", "WASM"):
         unknowns = dependency_scan["unknowns"]
     return {
         "schema_version": "uoe.inspection.v0.3",
