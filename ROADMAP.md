@@ -31,7 +31,7 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Implement opt-in project-owned Linux end-to-end demo (inspection → planning → verified fixture)
 - [x] Validate 21 inspector/planner tests and the controlled demo in GitHub CI
 - [x] Review [prototype PR #11](https://github.com/Ravenmoray/universal-operating-environment/pull/11) for merge into `main`
-- [ ] Parse actual imports, dynamic libraries, interpreter and WASI requirements
+- [ ] Parse actual imports, dynamic libraries, interpreter and WASI requirements — static extraction delivered under v0.3 below; WASI is reported only as an import-module name hint
 - [x] Bind artifact SHA-256 and declared capability claims to evidence-backed graph providers
 
 ## v0.2 prototype — evidence binding (merged)
@@ -45,10 +45,16 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Consolidate graph validation and add JSON/fan-out budgets with mutation tests
 - [x] Extract ELF PT_INTERP and direct DT_NEEDED with file-offset evidence
 - [x] Test 32/64-bit, both byte orders, malformed inputs and a project-owned missing-library fixture against readelf
-- [ ] Extend sustained fuzzing, benchmarks and independent corpus coverage
-- [ ] Extract PE, WASM and Mach-O dependencies in separate changes
+- [x] Extract PE normal imports with named/ordinal symbols ([PR #25](https://github.com/Ravenmoray/universal-operating-environment/pull/25)); compare with GNU objdump
+- [x] Extract WebAssembly imports (module, name, kind) and compare with V8 on synthetic, compiled and real modules ([WASM notes](docs/research/wasm-dependencies.md))
+- [x] Extract Mach-O dylib, dynamic-linker, rpath and platform load commands for thin and universal binaries; compare with `llvm-objdump` ([Mach-O notes](docs/research/macho-dependencies.md))
+- [x] Compare all four parsers with independent tools on real files and with seeded differential fuzzing; record the defects found ([corpus validation](docs/research/corpus-validation.md))
+- [ ] Sustained coverage-guided fuzzing, benchmarks and a test corpus independent of one machine
+- [ ] Observe (rather than flag) PE delay-load imports and CLR references, WebAssembly import signatures, and Mach-O bindings
 
-The ELF increment does not complete M1 or the full v0.3 milestone.
+Static extraction now exists for all four formats, but this does not complete M1 or the
+full v0.3 milestone: the unchecked items above remain, observed names are not
+capability contracts, and the M1 boxes are left for maintainers to decide.
 
 ## Planning v0.3 → v1.0
 See [proposed release phases and gates](docs/roadmap/v1-delivery-plan.md):

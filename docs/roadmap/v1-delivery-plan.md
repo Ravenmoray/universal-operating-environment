@@ -53,7 +53,8 @@ The original vision—'Any software. Any computer. One intelligent environment.'
 ## Next delivery sequence
 
 PRs #11 and #20 established the v0.2 baseline. Shared graph hardening is merged
-and the first v0.3 increment adds ELF interpreter/direct-library observations.
+and v0.3 adds static requirement extraction for ELF, PE, WebAssembly and Mach-O,
+each compared with independent tools ([validation record](../research/corpus-validation.md)).
 No tagged release or production compatibility claim is implied.
 
 1. **Continue hardening the shared graph implementation (#21).** The single validator,
@@ -61,12 +62,14 @@ No tagged release or production compatibility claim is implied.
    in `uoe.graph`, with the original experiment as a compatibility entry point.
    Run old and new tests in CI whenever that implementation changes. Keep #21
    open for bounded performance/fuzz work and the remaining trust-boundary audit.
-2. **Deliver v0.3 in small parser PRs (#13).** The ELF PT_INTERP/DT_NEEDED
-   increment is implemented and compared with readelf on project-owned fixtures. Continue expanding
-   32/64-bit and endian fixtures, malformed offsets/lengths/string tables, explicit
-   dynamic-loading unknowns, and independent comparison with established tooling.
-   Then add PE, WASM and Mach-O support separately. Do not call the full v0.3
-   phase complete until its cross-format robustness and fuzz gates pass.
+2. **Finish v0.3 (#13).** ELF (PT_INTERP/DT_NEEDED), PE (normal imports),
+   WebAssembly (import section) and Mach-O (dylib, dynamic-linker, rpath, platform and
+   universal-slice commands) extraction are implemented, bounded, and compared with
+   readelf, objdump/llvm-readobj, V8 and llvm-objdump on project-owned fixtures,
+   real vendor files and seeded differential fuzzing. Do not call the full v0.3
+   phase complete until the remaining gates pass: sustained coverage-guided fuzzing,
+   a corpus independent of one machine, and observation (not just flagging) of PE
+   delay-load imports, CLR references, WebAssembly import signatures and Mach-O bindings.
 3. **Formalize adapters (#14).** Feed observed requirements into versioned
    native/Wine/WASM descriptors, preserving unknown and unsupported outcomes.
 4. **Build execution controls before broadening execution (#15).** Isolation and

@@ -1,14 +1,27 @@
 # UOE Experimental CLI — v0.3 development
 
-## ELF dependency inspection increment
+## Static dependency inspection (v0.3)
 
-`inspect` now reports PT_INTERP and direct DT_NEEDED entries for supported ELF
-executables and shared objects. Each dependency includes its byte-offset evidence;
-`plan` includes these as `observed_requirements`. Neither command runs the input.
-The inspection report version is `uoe.inspection.v0.3`; graph and claims schema
-versions are unchanged. See [scope, limits and tests](elf-dependencies.md).
+`inspect` reports what an artifact's own headers declare it needs, with byte-offset
+evidence for every observation; `plan` carries these as `observed_requirements`.
+Neither command runs, loads or resolves the input.
 
-This is the first v0.3 increment, not completion of the cross-format milestone.
+| Format | Observed | Details |
+| --- | --- | --- |
+| ELF | `PT_INTERP`, direct `DT_NEEDED` | [ELF](elf-dependencies.md) |
+| PE / PE32+ | Normal import descriptors, named and ordinal symbols | [PE](pe-dependencies.md) |
+| WebAssembly | Import section: modules, symbols, kinds; WASI preview1 name hint | [WASM](wasm-dependencies.md) |
+| Mach-O (thin and universal) | Dylib commands, dynamic linker, rpaths, platform versions, per-slice | [Mach-O](macho-dependencies.md) |
+
+The report version is `uoe.inspection.v0.3` ([field reference](inspection-report.md));
+graph and claims schema versions are unchanged. Every parser is bounded, fails
+explicitly on malformed input and has been compared with independent tools — see
+[corpus and differential validation](corpus-validation.md) for what was run, what it
+found, and what it cannot show.
+
+This is the v0.3 static-extraction work, not v0.3 completion: sustained
+coverage-guided fuzzing and a corpus independent of one machine remain open, and
+observed names are never capability contracts.
 
 
 ## New in v0.2 — Digest-bound capability planning
@@ -58,7 +71,7 @@ python3 -m uoe plan /bin/ls
 python3 -m uoe demo --execute-reviewed-fixture
 ```
 
-**Inspect** computes a SHA-256 and reads basic ELF, PE32/PE32+, Mach-O and WebAssembly headers. It does not execute the selected file. Its output includes observed facts, ecosystem hints, unknowns and limits.
+**Inspect** computes a SHA-256, reads basic ELF, PE32/PE32+, Mach-O and WebAssembly headers, and extracts static dependencies (see above). It does not execute the selected file. Its output includes observed facts, ecosystem hints, unknowns and limits. `python3 -m uoe --version` prints the development version.
 
 **Plan** suggests native, Wine or Wasmtime runners when basic host prerequisites appear present. It reports *unverified candidates* and unresolved dependencies. Merely finding Wine or Wasmtime does not demonstrate compatibility.
 
@@ -71,22 +84,23 @@ python3 -m pip install -e .
 uoe inspect /bin/ls
 ```
 
-The installed demo still requires the checked-in project-owned C fixture. No LLM or remote service is required for inspection and planning.
+Building needs setuptools 77 or newer (for the SPDX `license` expression in `pyproject.toml`); pip fetches it automatically unless build isolation is disabled. The installed demo still requires the checked-in project-owned C fixture. No LLM or remote service is required for inspection and planning.
 
 ## Scope and limitations
 
-- The prototype identifies binary headers and ELF direct dependencies; DLL imports, Mach-O load commands and WASI imports remain unimplemented.
+- The prototype identifies binary headers and static dependencies for ELF, PE, WebAssembly and Mach-O. PE delay-load imports and CLR references, WebAssembly import signatures and component-model binaries, and Mach-O bindings and `@rpath` expansion are not extracted; each is reported as an unknown where it applies.
 - Static headers cannot identify every runtime-loaded dependency, including the fixture's dynamically loaded DLL.
 - Runtime presence does not establish API compatibility, permission to run, licensing, or safety.
-- Fat Mach-O slices remain unresolved. Files larger than 2 GiB are refused in this v0 experiment.
+- Files larger than 2 GiB are refused in this v0 experiment. A universal Mach-O binary's slices are enumerated, but `plan` models only a same-architecture native candidate (no Rosetta or other translation).
 - User-supplied programs are **never executed** by inspect or plan. The explicit demo is not a sandbox.
 - The static planner does not yet join inspected artifact digests to signed capability evidence. The demo exposes the separately tested Capability Graph evidence.
 
 ## Next acceptance milestone
 
-Expand dependency observations to the other formats, extend fuzz coverage, then
-connect observed requirements to versioned adapter descriptors. Library names do
-not independently establish capability contracts. Authenticated evidence and
-execution isolation remain later gates.
+Extend fuzz coverage beyond seeded mutation, build a corpus independent of one
+machine, then connect observed requirements to versioned adapter descriptors
+([v0.4, issue #14](https://github.com/Ravenmoray/universal-operating-environment/issues/14)).
+Library names do not independently establish capability contracts. Authenticated
+evidence and execution isolation remain later gates.
 
 Related: [Capability Graph proposal](../rfcs/proposals/minimal-capability-graph.md), [Experiment 002](../../experiments/missing-capability/README.md), [AI evaluation methodology](003-ai-adapter-evaluation.md).

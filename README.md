@@ -2,7 +2,7 @@
 
 **Any software. Any computer. One intelligent environment.**
 
-> **Status:** Working research prototype on `main`, with the first v0.3 ELF inspection increment. Static dependency observations, digest-bound capability planning, and a controlled fixture demonstration are implemented. Universal execution and autonomous management remain goals.
+> **Status:** Working research prototype on `main`, with v0.3 static dependency extraction for ELF, PE, WebAssembly and Mach-O. Static dependency observations, digest-bound capability planning, and a controlled fixture demonstration are implemented. Universal execution and autonomous management remain goals.
 
 UOE is an open-source effort to develop an AI-native operating environment that understands software requirements, selects or constructs execution strategies, and retains verified knowledge about how its components work.
 
@@ -25,6 +25,8 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 - [Capability Graph model (draft proposal)](docs/rfcs/proposals/minimal-capability-graph.md) · [Research issue #9](https://github.com/Ravenmoray/universal-operating-environment/issues/9)
 - [Capability Graph read-only experiment](experiments/capability-graph/README.md) · [Evidence and testing guide](docs/research/evidence-and-testing.md)
 - [Working UOE CLI prototype, including v0.2 digest-bound capability planning](docs/research/working-prototype.md) — `inspect`, `plan`, and explicit controlled `demo`
+- [Inspection report reference](docs/research/inspection-report.md) · [Corpus and differential validation](docs/research/corpus-validation.md) — report fields, and how each parser was checked against independent tools
+- [Research notes index](docs/research/README.md)
 - [Evidence-gated delivery plan from v0.2 to v1.0](docs/roadmap/v1-delivery-plan.md)
 - [Experiment 002 — Missing capability: ELF execution, PE compilation, and controlled Wine research](experiments/missing-capability/README.md) · [AI evaluation methodology](docs/research/003-ai-adapter-evaluation.md) · [Follow-up issue #10](https://github.com/Ravenmoray/universal-operating-environment/issues/10)
 - [Roadmap](ROADMAP.md)
@@ -36,12 +38,16 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 
 ## Current milestone
 
-The CLI inspects ELF, PE, Mach-O and WASM headers without executing the input,
-including ELF interpreter and direct shared-library requirements,
-then proposes runtime and capability-provider candidates. The explicit `demo`
+The CLI inspects ELF, PE, Mach-O and WASM files without executing the input and
+extracts their statically declared requirements, each with byte-offset evidence:
+ELF interpreter and `DT_NEEDED`, PE normal imports, WebAssembly imports, and Mach-O
+dylib/rpath/platform load commands (including universal-binary slices). It then
+proposes runtime and capability-provider candidates. The explicit `demo`
 command runs only reviewed project-owned fixtures. Capability contracts still use explicit declarations; observed library names do
-not establish those contracts. PE, WASM and Mach-O dependency extraction remain
-future work. See [ELF scope and test evidence](docs/research/elf-dependencies.md).
+not establish those contracts. Runtime-loaded libraries, delay-loaded PE imports,
+WebAssembly import signatures and Mach-O bindings remain explicit unknowns.
+Details: [ELF](docs/research/elf-dependencies.md) · [PE](docs/research/pe-dependencies.md) ·
+[WebAssembly](docs/research/wasm-dependencies.md) · [Mach-O](docs/research/macho-dependencies.md).
 
 Start with the [working prototype guide](docs/research/working-prototype.md).
 The [next delivery sequence](docs/roadmap/v1-delivery-plan.md#next-delivery-sequence)

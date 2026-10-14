@@ -23,5 +23,10 @@ a project-owned DLL and client, removes the DLL and compares inspection to MinGW
 objdump. Neither the DLL nor the client is launched. The compiler test is skipped
 locally when MinGW is unavailable and explicitly run in the cross-compile workflow.
 
+Real-world check: [corpus and differential validation](corpus-validation.md) compared
+52 PE files (x86, x86-64 and ARM64, including large Rust-built executables) against
+`llvm-readobj --coff-imports` for DLL names, order and imported symbol names. Report
+shape: [inspection report reference](inspection-report.md).
+
 Run `python3 -m unittest discover -s tests -p test_pe_dependencies.py -v`.
 This is an experimental parser subset, not full PE validation or a sandbox.
