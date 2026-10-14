@@ -1,7 +1,9 @@
-"""Bounded, non-executing binary header and ELF dependency inspection.
+"""Bounded, non-executing binary header and static dependency inspection.
 
 This is not a security boundary. It identifies formats, not application
-compatibility. ELF observations cover direct program-header dependencies only.
+compatibility. Dependency observations are limited to what each format parser
+documents (ELF program headers, PE normal imports, WASM import section, Mach-O
+load commands); runtime-resolved requirements always remain unknown.
 """
 from __future__ import annotations
 
@@ -13,13 +15,15 @@ import struct
 
 from .elf import ElfError, inspect_dependencies
 from .binary_input import BinaryError
+from .macho import CPU_ARCH as MACH_ARCH, MAGICS as MACH_MAGICS
+from .macho import inspect_dependencies as inspect_macho_dependencies
 from .pe import inspect_dependencies as inspect_pe_dependencies
+from .wasm import inspect_dependencies as inspect_wasm_dependencies
 
 HEADER_LIMIT = 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 ARCH = {3: "x86", 40: "arm", 62: "x86_64", 183: "aarch64", 243: "riscv"}
 PE_ARCH = {0x014c: "x86", 0x8664: "x86_64", 0xaa64: "aarch64", 0x01c4: "arm"}
-MACH_ARCH = {7: "x86", 0x01000007: "x86_64", 12: "arm", 0x0100000c: "aarch64"}
 
 
 class InspectionError(ValueError):
@@ -56,17 +60,14 @@ def _inspect_pe(data: bytes):
     if magic not in (0x10b, 0x20b):
         raise InspectionError("invalid or unsupported PE optional header")
     return ("PE", PE_ARCH.get(machine, f"unknown:{machine}"),
-            32 if magic == 0x10b else 64, "little", "windows",
-            ["PE import table and runtime LoadLibrary calls not yet enumerated",
-             "Runtime compatibility cannot be determined from headers alone"])
+            32 if magic == 0x10b else 64, "little", "windows", [])
 
 
 def _inspect_wasm(data: bytes):
     _need(data, 0, 8)
     if data[4:8] != b"\x01\x00\x00\x00":
         raise InspectionError("unsupported WebAssembly binary version")
-    return ("WASM", "wasm32", 32, "little", "wasm",
-            ["WASM imports and required WASI interfaces not yet enumerated"])
+    return ("WASM", "wasm32", 32, "little", "wasm", [])
 
 
 def _inspect_mach(data: bytes):
@@ -80,14 +81,12 @@ def _inspect_mach(data: bytes):
     if magic in (b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
                  b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"):
         _need(data, 0, 8)
-        return ("Mach-O-fat", "multiple", None, "mixed", "apple",
-                ["Universal binary slices and required frameworks not yet enumerated"])
+        return ("Mach-O-fat", "multiple", None, "mixed", "apple", [])
     endian, bits = formats[magic]
     _need(data, 0, 8)
     cpu = struct.unpack_from(endian + "I", data, 4)[0]
     return ("Mach-O", MACH_ARCH.get(cpu, f"unknown:{cpu}"), bits,
-            "little" if endian == "<" else "big", "apple",
-            ["Mach-O load commands, framework versions and signatures not resolved"])
+            "little" if endian == "<" else "big", "apple", [])
 
 
 def inspect_file(path: str | Path) -> dict:
@@ -104,7 +103,8 @@ def inspect_file(path: str | Path) -> dict:
         raise InspectionError("file too small to identify")
     digest = hashlib.sha256()
     dependency_scan = {"status": "not_implemented", "dependencies": [],
-                       "scope": "dependency extraction is implemented for ELF and PE"}
+                       "scope": "dependency extraction is implemented for ELF, PE, "
+                                "WASM and Mach-O"}
     # O_NONBLOCK prevents a path replaced with a FIFO from blocking at open on
     # POSIX. Recheck the opened descriptor rather than trusting the earlier stat.
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
@@ -121,14 +121,19 @@ def inspect_file(path: str | Path) -> dict:
                 raise InspectionError("file exceeds 2 GiB inspection limit")
             digest.update(block)
         if header.startswith(b"\x7fELF"):
-            try:
-                dependency_scan = inspect_dependencies(handle, before.st_size)
-            except ElfError as exc:
-                raise InspectionError(str(exc)) from exc
+            scanner = inspect_dependencies
         elif header.startswith(b"MZ"):
+            scanner = inspect_pe_dependencies
+        elif header.startswith(b"\x00asm"):
+            scanner = inspect_wasm_dependencies
+        elif header[:4] in MACH_MAGICS:
+            scanner = inspect_macho_dependencies
+        else:
+            scanner = None
+        if scanner is not None:
             try:
-                dependency_scan = inspect_pe_dependencies(handle, before.st_size)
-            except BinaryError as exc:
+                dependency_scan = scanner(handle, before.st_size)
+            except (ElfError, BinaryError) as exc:
                 raise InspectionError(str(exc)) from exc
         after = os.fstat(handle.fileno())
         if (total != before.st_size or
@@ -143,12 +148,7 @@ def inspect_file(path: str | Path) -> dict:
         parser = _inspect_pe
     elif header.startswith(b"\x00asm"):
         parser = _inspect_wasm
-    elif header[:4] in (
-        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
-        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
-        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"
-    ):
+    elif header[:4] in MACH_MAGICS:
         parser = _inspect_mach
     else:
         raise InspectionError("unrecognized executable format")
@@ -157,10 +157,18 @@ def inspect_file(path: str | Path) -> dict:
     if binary_format == "ELF":
         unknowns = ["ELF OS ABI compatibility, dynamic loading (dlopen), transitive dependencies, symbol versions, "
                     "library search paths and runtime behavior remain unresolved"]
-        if dependency_scan["status"] != "complete_static":
-            unknowns.append("ELF object type is outside dependency inspection scope")
-    if binary_format == "PE":
+        unknowns.extend(dependency_scan.get("unknowns", []))
+    else:
         unknowns = dependency_scan["unknowns"]
+    binary = {
+        "format": binary_format,
+        "architecture": arch,
+        "bits": bits,
+        "endianness": endian,
+        "ecosystem_hint": family,
+    }
+    if binary_format == "Mach-O-fat":
+        binary["slice_architectures"] = [x["architecture"] for x in dependency_scan["slices"]]
     return {
         "schema_version": "uoe.inspection.v0.3",
         "artifact": {
@@ -168,13 +176,7 @@ def inspect_file(path: str | Path) -> dict:
             "sha256": digest.hexdigest(),
             "size_bytes": info.st_size,
         },
-        "binary": {
-            "format": binary_format,
-            "architecture": arch,
-            "bits": bits,
-            "endianness": endian,
-            "ecosystem_hint": family,
-        },
+        "binary": binary,
         "evidence": ["binary magic and format-specific header fields"],
         "static_dependencies": dependency_scan["dependencies"],
         "dependency_scan": {k: v for k, v in dependency_scan.items() if k != "dependencies"},

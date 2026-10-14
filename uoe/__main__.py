@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import __version__
 from .inspector import InspectionError, inspect_file
 from .claims import load_claims, plan_capabilities
 from .graph import load_graph
@@ -112,8 +113,9 @@ def main(argv: list[str] | None = None) -> int:
         description=("UOE experimental OS-neutral artifact analysis and "
                      "non-executing execution planning"),
     )
+    parser.add_argument("--version", action="version", version=f"uoe {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
-    inspect_cmd = commands.add_parser("inspect", help="Read headers and ELF dependencies; never run the artifact")
+    inspect_cmd = commands.add_parser("inspect", help="Read headers and static dependencies (ELF, PE, WASM, Mach-O); never run the artifact")
     inspect_cmd.add_argument("artifact", type=Path)
     plan_cmd = commands.add_parser("plan", help="Explain potential runners; never run software")
     plan_cmd.add_argument("artifact", type=Path)

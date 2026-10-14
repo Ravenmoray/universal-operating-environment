@@ -17,13 +17,13 @@ from uoe.inspector import inspect_file
 from uoe.planner import plan_inspection
 
 
-def fixture(bits=64, endian='<', strings_offset=0x300):
+def fixture(bits=64, endian='<', strings_offset=0x300, padding=0):
     """Section-free executable with independent program-header observations."""
     eh = 64 if bits == 64 else 52
     ph = 56 if bits == 64 else 32
     dyn_size = 16 if bits == 64 else 8
     interp = b'/example/loader\0'
-    strings = b'\0libone.so\0libtwo.so\0'
+    strings = b'\0libone.so\0libtwo.so\0' + b'\0' * padding
     data = bytearray(strings_offset + len(strings))
     data[:7] = b'\x7fELF' + bytes([2 if bits == 64 else 1, 1 if endian == '<' else 2, 1])
     struct.pack_into(endian + ('HHIQQQIHHHHHH' if bits == 64 else 'HHIIIIIHHHHHH'),
@@ -60,6 +60,42 @@ class ElfDependencyTests(unittest.TestCase):
     def test_string_table_beyond_header_window(self):
         self.assertEqual(scan(fixture(strings_offset=2_000_000))['dependencies'][2]['name'], 'libtwo.so')
 
+    def test_string_table_larger_than_read_budget_is_not_read_whole(self):
+        # Real executables (e.g. node) have tens of megabytes of .dynstr; only the
+        # referenced names should be read, not the table.
+        data = fixture(padding=20_000_000)
+        result = scan(data)
+        self.assertEqual([d['name'] for d in result['dependencies']],
+                         ['/example/loader', 'libone.so', 'libtwo.so'])
+        self.assertEqual(result['status'], 'complete_static')
+
+    def test_segments_without_file_content_are_reported_not_guessed(self):
+        # objcopy --only-keep-debug leaves PT_DYNAMIC/PT_INTERP with p_filesz == 0.
+        for label, segment in (('PT_DYNAMIC', 2), ('PT_INTERP', 1)):
+            data = fixture()
+            struct.pack_into('<Q', data, 64 + segment * 56 + 32, 0)
+            struct.pack_into('<Q', data, 64 + segment * 56 + 40, 0)
+            with self.subTest(label):
+                result = scan(data)
+                self.assertEqual(result['status'], 'partial_static')
+                self.assertTrue(any(label in x for x in result['unknowns']))
+                names = [d['name'] for d in result['dependencies']]
+                self.assertEqual(names, ['libone.so', 'libtwo.so'] if label == 'PT_INTERP'
+                                 else ['/example/loader'])
+
+    def test_debug_file_report_carries_the_unknown(self):
+        data = fixture()
+        for segment in (1, 2):
+            struct.pack_into('<QQ', data, 64 + segment * 56 + 32, 0, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'debug.elf'
+            path.write_bytes(data)
+            report = inspect_file(path)
+        self.assertEqual(report['dependency_scan']['status'], 'partial_static')
+        self.assertEqual(report['static_dependencies'], [])
+        self.assertTrue(any('no file content' in x for x in report['unknowns']))
+        self.assertTrue(any('dlopen' in x for x in report['unknowns']))
+
     def test_no_dynamic_segment_has_no_invented_libraries(self):
         data = fixture()
         struct.pack_into('<I', data, 64 + 2 * 56, 0)
@@ -84,7 +120,7 @@ class ElfDependencyTests(unittest.TestCase):
             (64 + 16, '<Q', 2**64-1),        # virtual address overflow
             (64 + 56, '<I', 2),              # duplicate dynamic segments
             (0x240 + 8, '<Q', 0x900000),     # unmapped DT_STRTAB
-            (0x250 + 8, '<Q', 1_000_001),    # string table budget
+            (0x250 + 8, '<Q', 1_000_001),    # string table exceeds its mapping
             (0x260 + 8, '<Q', 9000),         # needed string out of range
             (0x280, '<q', 1),                # missing DT_NULL
             (0x250, '<q', 5),                # duplicate DT_STRTAB
@@ -126,7 +162,8 @@ class ElfDependencyTests(unittest.TestCase):
                 result = scan(data)
             except ElfError:
                 continue
-            self.assertIn(result['status'], ('complete_static', 'unsupported_object_type'))
+            self.assertIn(result['status'], ('complete_static', 'partial_static',
+                                             'unsupported_object_type'))
             self.assertLessEqual(len(result['dependencies']), 257)
 
     def test_concurrent_change_is_rejected(self):
