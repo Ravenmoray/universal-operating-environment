@@ -44,6 +44,17 @@ def mach(cpu=0x01000007):
     return b"\xcf\xfa\xed\xfe" + struct.pack("<I", cpu) + b"\x00" * 32
 
 
+def fat_mach(cpus=(0x01000007, 0x0100000c)):
+    """Universal container of empty (zero load command) 64-bit executables."""
+    images = [mach(cpu)[:8] + struct.pack("<2I", 3, 2) + b"\x00" * 16 for cpu in cpus]
+    table_end = 8 + 20 * len(images)
+    header, body = b"\xca\xfe\xba\xbe" + struct.pack(">I", len(images)), b""
+    for cpu, image in zip(cpus, images):
+        header += struct.pack(">IIIII", cpu, 3, table_end + len(body), len(image), 0)
+        body += image
+    return header + body
+
+
 class UoeTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -87,10 +98,17 @@ class UoeTests(unittest.TestCase):
         r = inspect_file(self.make(mach()))
         self.assertEqual(r["binary"]["architecture"], "x86_64")
 
-    def test_fat_mach_is_explicitly_unresolved(self):
-        r = inspect_file(self.make(b"\xca\xfe\xba\xbe\x00\x00\x00\x02"))
+    def test_fat_mach_slices_are_enumerated(self):
+        r = inspect_file(self.make(fat_mach()))
         self.assertEqual(r["binary"]["format"], "Mach-O-fat")
         self.assertEqual(r["binary"]["architecture"], "multiple")
+        self.assertEqual(r["binary"]["slice_architectures"], ["x86_64", "aarch64"])
+        self.assertEqual(r["dependency_scan"]["status"], "complete_static")
+
+    def test_header_only_fat_mach_is_rejected_as_truncated(self):
+        # Previously accepted from the 8-byte header alone; slices are now required.
+        with self.assertRaises(InspectionError):
+            inspect_file(self.make(b"\xca\xfe\xba\xbe\x00\x00\x00\x02"))
 
     def test_invalid_elf_endianness_rejected(self):
         data = bytearray(elf())
@@ -150,12 +168,14 @@ class UoeTests(unittest.TestCase):
         self.assertTrue(r["unresolved"])
         self.assertFalse(r["strategies"][0]["verified_compatible"])
 
-    def test_fat_mach_has_no_implicit_candidate(self):
-        r = plan_inspection(
-            inspect_file(self.make(b"\xca\xfe\xba\xbe\x00\x00\x00\x02")),
-            host_os="darwin", host_arch="x86_64"
-        )
-        self.assertEqual(r["status"], "unresolved")
+    def test_fat_mach_candidate_requires_a_matching_slice(self):
+        scanned = inspect_file(self.make(fat_mach((0x01000007,))))
+        matching = plan_inspection(scanned, host_os="darwin", host_arch="x86_64")
+        self.assertEqual(matching["status"], "candidates_found")
+        self.assertFalse(matching["strategies"][0]["verified_compatible"])
+        for host_os, host_arch in (("darwin", "aarch64"), ("linux", "x86_64")):
+            r = plan_inspection(scanned, host_os=host_os, host_arch=host_arch)
+            self.assertEqual(r["status"], "unresolved", (host_os, host_arch))
 
     def test_static_operations_do_not_launch_programs(self):
         with patch.object(subprocess, "run", side_effect=AssertionError("execution attempted")):
@@ -169,6 +189,32 @@ class UoeTests(unittest.TestCase):
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["binary"]["format"], "PE")
+
+    def test_cli_reports_malformed_input_without_traceback(self):
+        p = self.make(b"\x00asm\x01\x00\x00\x00\x63\x00")
+        result = subprocess.run([sys.executable, "-m", "uoe", "inspect", str(p)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertTrue(result.stderr.startswith("uoe: "))
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_cli_version(self):
+        result = subprocess.run([sys.executable, "-m", "uoe", "--version"],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertRegex(result.stdout, r"^uoe \d+\.\d+\.\d+")
+
+    def test_cli_plan_reports_observed_wasm_imports(self):
+        module = (b"\x00asm\x01\x00\x00\x00" + b"\x02\x0b\x01" + b"\x03env" + b"\x03log" + b"\x00\x00")
+        p = self.make(module)
+        result = subprocess.run([sys.executable, "-m", "uoe", "plan", str(p)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["observed_requirements"][0]["name"], "env")
+        self.assertEqual(plan["observed_requirements"][0]["symbols"][0]["name"], "log")
+        self.assertFalse(plan["execution_attempted"])
 
     def test_demo_requires_explicit_execution(self):
         r = subprocess.run([sys.executable, "-m", "uoe", "demo"],

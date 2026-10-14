@@ -62,17 +62,30 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
             add("wine", False, "No PE execution adapter defined for this host",
                 ["No supported execution plan currently available"])
     elif fmt == "WASM":
+        modules = [d for d in inspection.get("static_dependencies", [])
+                   if d["kind"] == "wasm_import_module"]
+        constraints = ["Exports, start behavior and resource permissions still unverified"]
+        host_modules = sorted(d["name"] or "(empty name)" for d in modules
+                              if "interface_hint" not in d)
+        if host_modules:
+            constraints.append("Non-WASI import modules must be supplied by an embedder "
+                               "or linked modules: " + ", ".join(host_modules))
+        if len(host_modules) != len(modules):
+            constraints.append("WASI preview1 module names observed; per-function support "
+                               "and granted permissions need verification")
         add("wasmtime", bool(runtimes.get("wasmtime", False)),
             "Wasmtime can execute compatible WebAssembly components or modules",
-            ["Imports, WASI requirements and resource permissions still unknown"])
+            constraints)
     elif fmt == "Mach-O":
         add("native", host_os == "darwin" and same_arch,
             "Native Apple loader may support the Mach-O binary",
             ["Frameworks, code signing and entitlements still unknown"])
     elif fmt == "Mach-O-fat":
-        add("native", False,
-            "Universal Mach-O binary slices have not been enumerated",
-            ["Inspect individual slices before choosing an execution architecture"])
+        slices = binary.get("slice_architectures", [])
+        add("native", host_os == "darwin" and host_arch in slices,
+            "Native Apple loader may support a slice of this universal binary",
+            ["Slice architectures: " + (", ".join(slices) or "none enumerated"),
+             "Frameworks, code signing and entitlements still unknown"])
 
     return {
         "schema_version": "uoe.plan.v0.1",

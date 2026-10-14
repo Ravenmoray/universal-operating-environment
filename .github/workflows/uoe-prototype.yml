@@ -37,8 +37,42 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Measure graph fan-out boundary (synthetic input)
         run: timeout 20s python3 tests/benchmark_graph.py
-      - name: Check CLI help
-        run: python3 -m uoe --help
+      - name: Check CLI help and version
+        run: |
+          python3 -m uoe --help
+          python3 -m uoe --version
+
+  cross-format-validation:
+    # Installs reference tools and parses project-generated inputs plus the
+    # runner's own system files (read-only). Never run on untrusted PR checkouts.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: static-inspection-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install reference tools (readelf, LLVM, clang, lld)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils clang lld llvm
+      - name: Record tool versions
+        run: |
+          readelf --version | head -1
+          llvm-objdump --version | sed -n 1,2p
+          node --version
+      - name: Format tests with every independent reference present
+        run: python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies -v
+      - name: Seeded differential fuzz (WASM vs V8, Mach-O vs llvm-objdump)
+        run: |
+          python3 tests/fuzz_differential.py wasm --seed 101 --count 5000
+          python3 tests/fuzz_differential.py macho --seed 101 --count 1000
+      - name: Compare extraction with readelf on the runner's own ELF files
+        run: python3 tests/corpus_check.py /usr/bin --limit 400
 
   controlled-demo:
     # Never execute C files from an untrusted pull_request checkout.

@@ -1,0 +1,193 @@
+"""Compare static dependency extraction with independent tools over local files.
+
+Usage: python3 tests/corpus_check.py PATH [PATH ...] [--limit N] [--json]
+
+Files are only read, never executed. Reference tools are optional; a comparison
+is skipped (and counted) when its tool is missing:
+
+  ELF     readelf (binutils): NEEDED entries and the program interpreter
+  PE      llvm-readobj --coff-imports: DLL names and imported symbol names
+  WASM    Node.js WebAssembly.Module.imports (compiles; never instantiates)
+  Mach-O  llvm-objdump --macho --dylibs-used --rpaths
+
+Exit status is 1 when any file crashes the parser or disagrees with its
+reference. A file the parser *rejects* is listed with its reason but is not a
+disagreement by itself: corrupt and hostile files are expected to be rejected.
+Results describe only the files you point this at; they are not a coverage claim.
+"""
+import argparse
+import collections
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from uoe.inspector import InspectionError, inspect_file  # noqa: E402
+
+NODE_SCRIPT = ('const m=new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));'
+               'console.log(JSON.stringify(WebAssembly.Module.imports(m)))')
+PE_SUFFIXES = ('.exe', '.dll', '.sys', '.ocx', '.efi')
+WASM_KEY = lambda row: (row['module'], row['name'], row['kind'])
+
+
+def run(command):
+    return subprocess.run(command, capture_output=True, text=True, errors='replace',
+                          timeout=120, env=dict(os.environ, LC_ALL='C'))
+
+
+def candidates(paths):
+    seen = set()  # a symlinked root (e.g. /lib -> /usr/lib) or hard link must count once
+    for root in paths:
+        root = Path(root)
+        files = [root] if root.is_file() else (
+            Path(dirpath) / name for dirpath, _, names in os.walk(root) for name in sorted(names))
+        for path in files:
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                identity = (path.stat().st_dev, path.stat().st_ino)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                with path.open('rb') as handle:
+                    head = handle.read(8)
+            except OSError:
+                continue
+            if head.startswith(b'\x7fELF'):
+                yield 'ELF', path
+            elif head.startswith(b'MZ') and path.suffix.lower() in PE_SUFFIXES:
+                yield 'PE', path
+            elif head.startswith(b'\0asm'):
+                yield 'WASM', path
+            elif head[:4] in (b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf',
+                              b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf'):
+                yield 'Mach-O', path
+
+
+def reference_elf(path):
+    if not shutil.which('readelf'):
+        return None
+    dynamic, headers = run(['readelf', '-dW', str(path)]), run(['readelf', '-lW', str(path)])
+    return (re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic.stdout),
+            re.findall(r'Requesting program interpreter: (.*?)\]', headers.stdout))
+
+
+def observed_elf(report):
+    deps = report['static_dependencies']
+    return ([d['name'] for d in deps if d['kind'] == 'shared_library'],
+            [d['name'] for d in deps if d['kind'] == 'interpreter'])
+
+
+def reference_pe(path):
+    if not shutil.which('llvm-readobj'):
+        return None
+    out = run(['llvm-readobj', '--coff-imports', str(path)]).stdout
+    blocks = re.findall(r'Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S)
+    return [(name, [n for n, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
+            for name, body in blocks]
+
+
+def observed_pe(report):
+    return [(d['name'], [s['name'] for s in d['symbols'] if 'name' in s])
+            for d in report['static_dependencies']]
+
+
+def reference_wasm(path):
+    if not shutil.which('node'):
+        return None
+    done = run(['node', '-e', NODE_SCRIPT, str(path)])
+    return sorted(json.loads(done.stdout), key=WASM_KEY) if done.returncode == 0 else 'rejected'
+
+
+def observed_wasm(report):
+    return sorted(({'module': d['name'], 'name': s['name'], 'kind': s['kind']}
+                   for d in report['static_dependencies'] for s in d['symbols']), key=WASM_KEY)
+
+
+def reference_macho(path):
+    if not shutil.which('llvm-objdump'):
+        return None
+    done = run(['llvm-objdump', '--macho', '--arch', 'all', '--dylibs-used', '--rpaths', str(path)])
+    names = [line.strip().split(' (')[0] for line in done.stdout.split('\n')
+             if line.strip() and not line.rstrip().endswith(':') and not line.startswith(str(path))]
+    # --dylibs-used lists a dylib's own install name (LC_ID_DYLIB), which is its
+    # identity rather than a requirement; remove it once per architecture.
+    identity = run(['llvm-objdump', '--macho', '--arch', 'all', '--dylib-id', str(path)])
+    for line in identity.stdout.split('\n'):
+        if line.strip() and not line.rstrip().endswith(':') and line.strip() in names:
+            names.remove(line.strip())
+    return sorted(names) if done.returncode == 0 and (names or identity.stdout.strip()) else 'rejected'
+
+
+def observed_macho(report):
+    return sorted(d['name'] for d in report['static_dependencies']
+                  if d['kind'] in ('shared_library', 'runtime_search_path'))
+
+
+COMPARERS = {'ELF': (reference_elf, observed_elf), 'PE': (reference_pe, observed_pe),
+             'WASM': (reference_wasm, observed_wasm), 'Mach-O': (reference_macho, observed_macho)}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('paths', nargs='+')
+    parser.add_argument('--limit', type=int, default=0, help='stop after N files per format')
+    parser.add_argument('--json', action='store_true', help='print the full machine-readable result')
+    args = parser.parse_args(argv)
+
+    summary = {fmt: collections.Counter() for fmt in COMPARERS}
+    problems = collections.defaultdict(list)
+    for fmt, path in candidates(args.paths):
+        counts = summary[fmt]
+        if args.limit and counts['files'] >= args.limit:
+            continue
+        counts['files'] += 1
+        try:
+            report = inspect_file(path)
+        except InspectionError as exc:
+            counts['rejected'] += 1
+            problems[fmt + ' rejected'].append(f'{path}: {exc}')
+            continue
+        except Exception as exc:  # a crash is always a defect
+            counts['crashed'] += 1
+            problems[fmt + ' crashed'].append(f'{path}: {exc!r}')
+            continue
+        status = report['dependency_scan']['status']
+        if status in ('unsupported_object_type', 'unsupported_fat_byte_order'):
+            counts['unsupported_scope'] += 1
+            continue
+        if status in ('partial_static',):
+            counts['partial'] += 1
+            continue
+        reference, observed = COMPARERS[fmt]
+        expected = reference(path)
+        if expected is None:
+            counts['no_reference_tool'] += 1
+        elif expected == 'rejected':
+            counts['reference_also_rejected'] += 1
+        elif expected == observed(report):
+            counts['matched'] += 1
+        else:
+            counts['disagreed'] += 1
+            problems[fmt + ' disagreed'].append(str(path))
+    result = {'summary': {fmt: dict(c) for fmt, c in summary.items() if c},
+              'details': {kind: rows[:50] for kind, rows in problems.items()}}
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        for fmt, counts in result['summary'].items():
+            print(f'{fmt:7} ' + ', '.join(f'{k}={v}' for k, v in sorted(counts.items())))
+        for kind, rows in result['details'].items():
+            print(f'-- {kind} ({len(problems[kind])}); first {min(5, len(rows))}:')
+            for row in rows[:5]:
+                print('   ', row)
+    failed = any(counts['crashed'] or counts['disagreed'] for counts in summary.values())
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
