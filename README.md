@@ -40,12 +40,13 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 
 The CLI inspects ELF, PE, Mach-O and WASM files without executing the input and
 extracts their statically declared requirements, each with byte-offset evidence:
-ELF interpreter and `DT_NEEDED`, PE normal imports, WebAssembly imports, and Mach-O
-dylib/rpath/platform load commands (including universal-binary slices). It then
+ELF interpreter and `DT_NEEDED`, PE normal and delay-load imports plus .NET assembly
+references, WebAssembly imports, and Mach-O dylib/rpath/platform load commands
+(including universal-binary slices). It then
 proposes runtime and capability-provider candidates. The explicit `demo`
 command runs only reviewed project-owned fixtures. Capability contracts still use explicit declarations; observed library names do
-not establish those contracts. Runtime-loaded libraries, delay-loaded PE imports,
-WebAssembly import signatures and Mach-O bindings remain explicit unknowns.
+not establish those contracts. Runtime-loaded libraries, WebAssembly import
+signatures and Mach-O bindings remain explicit unknowns.
 Details: [ELF](docs/research/elf-dependencies.md) · [PE](docs/research/pe-dependencies.md) ·
 [WebAssembly](docs/research/wasm-dependencies.md) · [Mach-O](docs/research/macho-dependencies.md).
 

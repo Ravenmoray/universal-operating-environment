@@ -75,6 +75,48 @@ This is seeded mutation of small inputs with a fixed PRNG, **not coverage-guided
 fuzzing**, and it covers only the structures the seeds contain. It does not replace
 the sustained fuzzing the [delivery plan](../roadmap/v1-delivery-plan.md) requires.
 
+## 3. PE delay-load imports and .NET references
+
+The 52 PE files in the first corpus run contained **no** delay-load directory and
+**no** CLR directory, so those paths had no real-file evidence at all until fixtures
+were found or built. Sources, all used read-only and not committed (their licenses
+were not reviewed for redistribution; they are fetched only for local parsing):
+
+- **Real MSVC-built delay-load files:** 103 PE files extracted from twelve PyPI
+  `win_amd64` wheels (cffi, cryptography, greenlet, grpcio, lxml, markupsafe, numpy,
+  orjson, pillow, psutil, pywin32, pyzmq). Three of them (`win32api.pyd`,
+  `win32evtlog.pyd`, `propsys.pyd`, all from pywin32) have a delay-import table, each
+  with one delayed DLL and a bound-delay-import table present.
+- **Real managed assemblies:** `Python.Runtime.dll` (pythonnet 3.2.1, a .NET Standard 2.0
+  library with five P/Invoke module references) and `ClrLoader.dll` for x86 and amd64
+  (clr_loader 0.3.1).
+- **Linker output we control:** a PE built with `lld-link` (x86-64) with `user32.dll`
+  delay-loaded, also used by the unit tests for x86-64 and ARM64.
+
+References: `llvm-readobj --coff-imports` for imports and delay imports (DLL names,
+delay vs static, symbol names in order) and [`dnfile`](https://github.com/mandiant/dnfile)
+0.18.0 for assembly and module references (name, version, culture, public-key token).
+
+| Check | Result |
+| --- | --- |
+| `corpus_check.py` over those files (107 PE files) vs `llvm-readobj` | 107 / 107 matched, including all 3 MSVC delay-load files |
+| The 3 managed assemblies vs `dnfile` | 3 / 3 matched on assembly refs and module refs |
+| CLR differential fuzz vs `dnfile` (mutations biased to the CLI header, metadata root, stream headers and table header of the three assemblies) | CLR_FUZZ_TOTALS |
+
+Treat the sample sizes honestly: three delay-load files from one project, and three
+managed images from two small packages. There is no `System.Private.CoreLib`-scale
+assembly, no ReadyToRun or single-file bundle, and no .NET Framework 2.0 metadata
+(`v2.0.50727`) in the set. The unit-test fixtures cover wide heap and table indexes
+(synthetic, with hand-computed row sizes, and cross-checked with `dnfile`), which the
+real files do not.
+
+The differential fuzz again enforces only the one-sided contract: `uoe` may be stricter
+than `dnfile` (which ignores stream bounds, accepts empty names and non-UTF-8 strings,
+and does not enforce header sizes), but must not misreport a result both accept. The
+rejections it records are of the deliberate kinds — stream or table data outside the
+declared bounds, row-count budgets, a CLI header size other than 72, non-ASCII stream
+names, non-UTF-8 version strings and malformed public-key blobs.
+
 ## Defects these checks found
 
 Recorded because the failures are as informative as the passes.
@@ -95,6 +137,13 @@ Recorded because the failures are as informative as the passes.
    found modules V8 accepts (tables/globals of `anyref`, `exnref`, `nofunc`, typed
    `(ref null $t)`) that the first WASM decoder refused. Decoder extended; cases are
    permanent tests.
+
+4. **The corpus tool silently skipped Python extension modules.** `corpus_check.py` did
+   not treat `.pyd` files as PE, so a scan of twelve Windows wheels saw 12 PE files
+   instead of 103 and found no delay-load files. Fixed; `.pyd` is now in the suffix list.
+5. **The corpus tool's PE comparison would have crashed on managed images**, because it
+   assumed every PE dependency has a `load_kind`; found the first time a managed
+   assembly was fed to it.
 
 Also recorded, because they were *not* parser defects but would have looked like
 them: `llvm-objdump --dylibs-used` lists a dylib's own `LC_ID_DYLIB` (identity, not a
