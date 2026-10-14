@@ -25,6 +25,15 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [ ] Compare the experiment against CycloneDX/SPDX or a simple dependency baseline
 - [ ] Design independently authenticated evidence and real behavioral integration tests
 
+## UOE v0.1 working CLI (prototype; review and testing ongoing)
+- [x] Create [read-only multi-format inspector](docs/research/working-prototype.md) with bounded ELF, PE, Mach-O and WASM header analysis
+- [x] Expose a deterministic runner planner with candidate and unresolved states
+- [x] Implement opt-in project-owned Linux end-to-end demo (inspection → planning → verified fixture)
+- [x] Validate 21 inspector/planner tests and the controlled demo in GitHub CI
+- [ ] Review [prototype PR #11](https://github.com/Ravenmoray/universal-operating-environment/pull/11) for merge into `main`
+- [ ] Parse actual imports, dynamic libraries, interpreter and WASI requirements
+- [ ] Bind artifact SHA-256 and declared capability claims to evidence-backed graph providers
+
 ## M2 — Execution planning
 - [ ] Define runner-adapter interface and host capability model
 - [ ] Evaluate native Linux, Wine and Wasmtime options
