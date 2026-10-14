@@ -33,6 +33,10 @@ def pe(machine=0x8664, magic=0x20b):
     blob[0x80:0x84] = b"PE\x00\x00"
     struct.pack_into("<H", blob, 0x84, machine)
     struct.pack_into("<H", blob, 0x98, magic)
+    optional_size = 240 if magic == 0x20b else 224
+    struct.pack_into("<H", blob, 0x94, optional_size)
+    struct.pack_into("<I", blob, 0x98 + 60, 512)
+    struct.pack_into("<I", blob, 0x98 + (108 if magic == 0x20b else 92), 16)
     return bytes(blob)
 
 

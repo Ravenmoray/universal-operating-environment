@@ -57,7 +57,7 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
                 "Wine may supply some Windows APIs for this PE binary",
                 ["Wine presence is not API compatibility",
                  "PE32+ and host architecture must match for this v0 strategy",
-                 "Imported DLLs and dynamic LoadLibrary requirements not resolved"])
+                 "Observed DLL imports still require resolution; dynamic LoadLibrary requirements remain unknown"])
         else:
             add("wine", False, "No PE execution adapter defined for this host",
                 ["No supported execution plan currently available"])
