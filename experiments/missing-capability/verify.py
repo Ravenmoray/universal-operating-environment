@@ -227,6 +227,8 @@ def produce_graph(report: dict):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, help="Optional JSON report filename")
+    parser.add_argument("--graph-output", type=Path,
+                        help="Optional graph JSON for UOE v0.2 demo (unauthenticated fixture evidence)")
     args = parser.parse_args()
     if sys.platform != "linux":
         parser.error("this initial fixture only supports Linux")
@@ -273,6 +275,10 @@ def main():
     sys.path.insert(0, str(graph_root))
     from uoe_graph.__main__ import plan, validate  # pylint: disable=import-outside-toplevel
     validate(graph)
+    if args.graph_output:
+        args.graph_output.parent.mkdir(parents=True, exist_ok=True)
+        args.graph_output.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n",
+                                     encoding="utf-8")
     candidate_plan = plan(graph, "artifact:uoe.elf-client", "host:linux-fixture")
     expect(candidate_plan["requirements"][0]["state"] == "test_backed_candidate",
            "verified fixture not represented in graph")

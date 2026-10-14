@@ -34,6 +34,23 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [ ] Parse actual imports, dynamic libraries, interpreter and WASI requirements
 - [ ] Bind artifact SHA-256 and declared capability claims to evidence-backed graph providers
 
+## v0.2 prototype — evidence binding (proposed, stacked on v0.1)
+- [x] Add [digest-bound capability claims and graph join](docs/research/working-prototype.md), with exact artifact SHA-256 comparison
+- [x] Reject mismatched requirements, graph links and unauthenticated host scope; report explicit evidence limitations
+- [x] Extend controlled demo to export artifact/claims/graph and independently replan it in CI
+- [x] Pass 41 combined unit tests and the reviewed demo round-trip ([CI run](https://github.com/Ravenmoray/universal-operating-environment/actions/runs/38395865631))
+- [ ] Review and merge v0.2 on top of v0.1 without treating caller-supplied evidence as attested
+
+## Planning v0.3 → v1.0
+See [proposed release phases and gates](docs/roadmap/v1-delivery-plan.md):
+- [v0.3 static dependency extraction](https://github.com/Ravenmoray/universal-operating-environment/issues/13)
+- [v0.4 adapter and host contracts](https://github.com/Ravenmoray/universal-operating-environment/issues/14)
+- [v0.5 security isolation](https://github.com/Ravenmoray/universal-operating-environment/issues/15)
+- [v0.6 signed evidence and recipe replay](https://github.com/Ravenmoray/universal-operating-environment/issues/16)
+- [v0.7 blinded AI repair benchmarks](https://github.com/Ravenmoray/universal-operating-environment/issues/17)
+- [v0.8 cross-runtime test matrix](https://github.com/Ravenmoray/universal-operating-environment/issues/18)
+- [v0.9–v1.0 release gates](https://github.com/Ravenmoray/universal-operating-environment/issues/19)
+
 ## M2 — Execution planning
 - [ ] Define runner-adapter interface and host capability model
 - [ ] Evaluate native Linux, Wine and Wasmtime options
