@@ -64,7 +64,9 @@ def inspect_dependencies(stream, file_size):
         else:
             typ, offset, address, _, size, memory_size, _, _ = row
         if typ in (1, 2, 3):
-            if offset > file_size or size > file_size - offset:
+            # A segment with no file content (p_filesz == 0, as in a separate debug
+            # file) keeps its original p_offset, which may lie beyond the new file.
+            if size and (offset > file_size or size > file_size - offset):
                 raise ElfError('ELF segment outside file')
             if size > memory_size:
                 raise ElfError('ELF segment file size exceeds memory size')

@@ -173,6 +173,38 @@ class WasmDependencyTests(unittest.TestCase):
         longest = section(0, name('x' * 200))
         self.assertEqual(scan(HEADER + longest)['section_count'], 1)
 
+    def test_possible_relocatable_objects_are_flagged_not_misclassified(self):
+        body = TYPES + imports(entry('env', 'f', FUNC(0)))
+        for label, extra in (('linking', section(0, name('linking') + b'\x02')),
+                             ('reloc.CODE', section(0, name('reloc.CODE') + b'\x00'))):
+            with self.subTest(label):
+                result = scan(HEADER + body + extra)
+                self.assertTrue(result['linker_sections'])
+                self.assertTrue(any('unlinked relocatable object' in x for x in result['unknowns']))
+                # Not reclassified: a linked module built with --emit-relocs keeps these
+                # sections and has real imports, so the scan still reports them.
+                self.assertEqual(result['status'], 'complete_static')
+                self.assertEqual(len(result['dependencies']), 1)
+        plain = scan(HEADER + body)
+        self.assertFalse(plain['linker_sections'])
+        self.assertFalse(any('relocatable' in x for x in plain['unknowns']))
+
+    @unittest.skipUnless(shutil.which('clang') and shutil.which('wasm-ld'), 'requires clang with the wasm backend')
+    def test_compiled_relocatable_object_is_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'm.c').write_text(
+                '__attribute__((import_module("env"), import_name("host_log"))) extern void host_log(int);\n'
+                'int run(int x) { host_log(x); return x; }\n')
+            build = subprocess.run(['clang', '--target=wasm32', '-nostdlib', '-O1', '-c',
+                                    str(root / 'm.c'), '-o', str(root / 'm.o')],
+                                   capture_output=True, text=True, timeout=60)
+            if build.returncode:
+                self.skipTest('clang cannot target wasm32 here: ' + build.stderr[-200:])
+            report = inspect_file(root / 'm.o')
+            self.assertTrue(report['dependency_scan']['linker_sections'])
+            self.assertTrue(any('unlinked relocatable object' in x for x in report['unknowns']))
+
     def test_malformed_containers_are_rejected(self):
         good_imports = imports(entry('m', 'f', FUNC()))
         cases = {
@@ -323,8 +355,7 @@ class WasmDependencyTests(unittest.TestCase):
                 expected = v8_imports(self.write(data))
                 observed = [{'module': d['name'], 'name': s['name'], 'kind': s['kind']}
                             for d in scan(data)['dependencies'] for s in d['symbols']]
-                key = lambda row: (row['module'], row['name'], row['kind'])
-                self.assertEqual(sorted(observed, key=key), sorted(expected, key=key))
+                self.assertEqual(observed, group_by_module(expected))
 
     @unittest.skipUnless(shutil.which('node'), 'requires Node.js for comparison')
     def test_mutated_modules_agree_with_v8(self):
@@ -350,7 +381,6 @@ class WasmDependencyTests(unittest.TestCase):
         outcome = subprocess.run(['node', '-e', script], input='\n'.join(c.hex() for c in cases),
                                  check=True, capture_output=True, text=True, timeout=120).stdout
         agreed = 0
-        key = lambda row: (row['module'], row['name'], row['kind'])
         for data, expected in zip(cases, json.loads(outcome)):
             if expected is None:
                 continue  # we do not validate function bodies or semantics
@@ -360,7 +390,7 @@ class WasmDependencyTests(unittest.TestCase):
                 self.fail(f'V8 accepted a module we rejected ({exc}): {data.hex()}')
             observed = [{'module': d['name'], 'name': s['name'], 'kind': s['kind']}
                         for d in found['dependencies'] for s in d['symbols']]
-            self.assertEqual(sorted(observed, key=key), sorted(expected, key=key), data.hex())
+            self.assertEqual(observed, group_by_module(expected), data.hex())
             agreed += 1
         self.assertGreater(agreed, 100)
 
@@ -381,12 +411,18 @@ class WasmDependencyTests(unittest.TestCase):
             if build.returncode:
                 self.skipTest('clang cannot target wasm32 here: ' + build.stderr[-200:])
             report = inspect_file(root / 'm.wasm')
-            observed = sorted((d['name'], s['name'], s['kind'])
-                              for d in report['static_dependencies'] for s in d['symbols'])
-            expected = sorted((r['module'], r['name'], r['kind']) for r in v8_imports(root / 'm.wasm'))
+            observed = [(d['name'], s['name'], s['kind'])
+                        for d in report['static_dependencies'] for s in d['symbols']]
+            expected = [(r['module'], r['name'], r['kind']) for r in group_by_module(v8_imports(root / 'm.wasm'))]
             self.assertEqual(observed, expected)
             self.assertIn(('env', 'host_log', 'function'), observed)
             self.assertFalse(report['execution_attempted'])
+
+
+def group_by_module(rows):
+    """V8 lists imports in declaration order; uoe groups them by module in first-appearance order."""
+    order = list(dict.fromkeys(row['module'] for row in rows))
+    return [row for module in order for row in rows if row['module'] == module]
 
 
 def v8_imports(path):

@@ -1,6 +1,6 @@
 """Compare static dependency extraction with independent tools over local files.
 
-Usage: python3 tests/corpus_check.py PATH [PATH ...] [--limit N] [--json]
+Usage: python3 tests/corpus_check.py PATH [PATH ...] [--limit N] [--json] [--fail-on-reject]
 
 Files are only read, never executed. Reference tools are optional; a comparison
 is skipped (and counted) when its tool is missing:
@@ -11,8 +11,10 @@ is skipped (and counted) when its tool is missing:
   Mach-O  llvm-objdump --macho --dylibs-used --rpaths
 
 Exit status is 1 when any file crashes the parser or disagrees with its
-reference. A file the parser *rejects* is listed with its reason but is not a
-disagreement by itself: corrupt and hostile files are expected to be rejected.
+reference. By default a file the parser *rejects* is listed with its reason but is
+not a failure: corrupt and hostile files are expected to be rejected. Pass
+--fail-on-reject when the corpus is known to be valid (for example a CI runner's own
+system binaries) so that a parser that wrongly rejects valid files cannot pass.
 Results describe only the files you point this at; they are not a coverage claim.
 """
 import argparse
@@ -31,7 +33,12 @@ from uoe.inspector import InspectionError, inspect_file  # noqa: E402
 NODE_SCRIPT = ('const m=new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));'
                'console.log(JSON.stringify(WebAssembly.Module.imports(m)))')
 PE_SUFFIXES = ('.exe', '.dll', '.sys', '.ocx', '.efi')
-WASM_KEY = lambda row: (row['module'], row['name'], row['kind'])
+
+
+def group_by_module(rows):
+    """V8 lists imports in declaration order; uoe groups them by module in first-appearance order."""
+    order = list(dict.fromkeys(row['module'] for row in rows))
+    return [row for module in order for row in rows if row['module'] == module]
 
 
 def run(command):
@@ -100,12 +107,12 @@ def reference_wasm(path):
     if not shutil.which('node'):
         return None
     done = run(['node', '-e', NODE_SCRIPT, str(path)])
-    return sorted(json.loads(done.stdout), key=WASM_KEY) if done.returncode == 0 else 'rejected'
+    return group_by_module(json.loads(done.stdout)) if done.returncode == 0 else 'rejected'
 
 
 def observed_wasm(report):
-    return sorted(({'module': d['name'], 'name': s['name'], 'kind': s['kind']}
-                   for d in report['static_dependencies'] for s in d['symbols']), key=WASM_KEY)
+    return [{'module': d['name'], 'name': s['name'], 'kind': s['kind']}
+            for d in report['static_dependencies'] for s in d['symbols']]
 
 
 def reference_macho(path):
@@ -137,6 +144,8 @@ def main(argv=None):
     parser.add_argument('paths', nargs='+')
     parser.add_argument('--limit', type=int, default=0, help='stop after N files per format')
     parser.add_argument('--json', action='store_true', help='print the full machine-readable result')
+    parser.add_argument('--fail-on-reject', action='store_true',
+                        help='exit 1 if the parser rejects any file (use only on corpora known to be valid)')
     args = parser.parse_args(argv)
 
     summary = {fmt: collections.Counter() for fmt in COMPARERS}
@@ -185,7 +194,8 @@ def main(argv=None):
             print(f'-- {kind} ({len(problems[kind])}); first {min(5, len(rows))}:')
             for row in rows[:5]:
                 print('   ', row)
-    failed = any(counts['crashed'] or counts['disagreed'] for counts in summary.values())
+    failed = any(counts['crashed'] or counts['disagreed'] or (args.fail_on_reject and counts['rejected'])
+                 for counts in summary.values())
     return 1 if failed else 0
 
 

@@ -83,6 +83,53 @@ class ElfDependencyTests(unittest.TestCase):
                 self.assertEqual(names, ['libone.so', 'libtwo.so'] if label == 'PT_INTERP'
                                  else ['/example/loader'])
 
+    def test_empty_segments_may_have_offsets_beyond_the_file(self):
+        # objcopy --only-keep-debug keeps the original p_offset but zeroes p_filesz, so
+        # offsets can exceed the (much smaller) debug file. Nothing is read from them.
+        data = fixture()
+        for segment in (0, 1, 2):
+            struct.pack_into('<QQ', data, 64 + segment * 56 + 8, 0x7000_0000, 0x7000_0000)  # offset, vaddr
+            struct.pack_into('<QQ', data, 64 + segment * 56 + 32, 0, 0)                    # filesz, memsz
+        result = scan(data)
+        self.assertEqual(result['status'], 'partial_static')
+        self.assertEqual(result['dependencies'], [])
+        # ...but a segment that claims file content outside the file is still rejected.
+        data = fixture()
+        struct.pack_into('<Q', data, 64 + 8, 0x7000_0000)
+        with self.assertRaisesRegex(ElfError, 'outside file'):
+            scan(data)
+
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('cc') and shutil.which('objcopy')
+                         and shutil.which('readelf'), 'requires a compiler, objcopy and readelf')
+    def test_objcopy_debug_file_is_partial_not_an_error(self):
+        # The standard way debug files are made: build, strip, keep only the debug part.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'hello.c').write_text('#include <stdio.h>\nint main(void){puts("hi");return 0;}\n')
+            subprocess.run([shutil.which('cc'), '-s', str(root / 'hello.c'), '-o', str(root / 'hello')],
+                           check=True, capture_output=True, timeout=30)
+            subprocess.run(['objcopy', '--only-keep-debug', str(root / 'hello'), str(root / 'hello.debug')],
+                           check=True, capture_output=True, timeout=30)
+            report = inspect_file(root / 'hello.debug')
+            self.assertEqual(report['dependency_scan']['status'], 'partial_static')
+            self.assertEqual(report['static_dependencies'], [])
+            self.assertTrue(any('no file content' in x for x in report['unknowns']))
+            # the real executable alongside it is unaffected
+            self.assertEqual(inspect_file(root / 'hello')['dependency_scan']['status'], 'complete_static')
+
+    def test_debug_file_is_not_offered_as_a_native_candidate(self):
+        data = fixture()
+        for segment in (1, 2):
+            struct.pack_into('<QQ', data, 64 + segment * 56 + 32, 0, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'debug.elf'
+            path.write_bytes(data)
+            report = inspect_file(path)
+        plan = plan_inspection(report, host_os='linux', host_arch='x86_64')
+        self.assertEqual(plan['strategies'][0]['state'], 'unavailable')
+        self.assertEqual(plan['status'], 'unresolved')
+        self.assertTrue(any('no file content' in x for x in plan['unresolved']))
+
     def test_debug_file_report_carries_the_unknown(self):
         data = fixture()
         for segment in (1, 2):

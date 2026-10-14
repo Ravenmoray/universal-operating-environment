@@ -25,7 +25,8 @@ FAT_MAGICS = {b'\xca\xfe\xba\xbe': False, b'\xca\xfe\xba\xbf': True}
 SWAPPED_FAT_MAGICS = (b'\xbe\xba\xfe\xca', b'\xbf\xba\xfe\xca')
 MAGICS = tuple(THIN_MAGICS) + tuple(FAT_MAGICS) + SWAPPED_FAT_MAGICS
 
-CPU_ARCH = {7: 'x86', 0x01000007: 'x86_64', 12: 'arm', 0x0100000c: 'aarch64'}
+CPU_ARCH = {7: 'x86', 0x01000007: 'x86_64', 12: 'arm', 0x0100000c: 'aarch64',
+            0x0200000c: 'arm64_32', 18: 'ppc', 0x01000012: 'ppc64'}
 FILE_TYPES = {2: 'executable', 6: 'dylib', 7: 'dylinker', 8: 'bundle'}
 
 DYLIB_COMMANDS = {
@@ -49,7 +50,7 @@ PLATFORMS = {1: 'macos', 2: 'ios', 3: 'tvos', 4: 'watchos', 5: 'bridgeos',
 
 
 def architecture(cpu_type):
-    return CPU_ARCH.get(cpu_type, f'unknown:{cpu_type}')
+    return CPU_ARCH.get(cpu_type, f'unknown:0x{cpu_type:x}')
 
 
 def _version(value):
@@ -66,6 +67,12 @@ def _string(command, offset, minimum):
         return command[offset:end].decode('utf-8')
     except UnicodeDecodeError as exc:
         raise BinaryError('non-UTF-8 Mach-O string') from exc
+
+
+def _scope_note(info):
+    where = f"slice {info['index']} ({info['architecture']})" if 'index' in info else 'image'
+    return (f"Mach-O {where} has file type {info['file_type']}, outside dependency "
+            "inspection scope; its load commands were not decoded")
 
 
 def _thin(reader, base, size, slice_info=None):
@@ -142,14 +149,16 @@ def _thin(reader, base, size, slice_info=None):
         elif command == LC_BUILD_VERSION:
             if command_size < 24:
                 raise BinaryError('truncated Mach-O build version command')
-            platform, minimum, sdk = struct.unpack_from(endian + 'III', body, 8)
+            platform, minimum, sdk, tools = struct.unpack_from(endian + 'IIII', body, 8)
+            if command_size < 24 + 8 * tools:
+                raise BinaryError('Mach-O build version command is smaller than its tool list')
             entry = {'kind': 'platform', 'name': PLATFORMS.get(platform, f'unknown:{platform}'),
                      'status': 'observed', 'minimum_os_version': _version(minimum),
                      'sdk_version': _version(sdk),
                      'evidence': {'source': 'LC_BUILD_VERSION', 'file_offset': origin}}
         elif command in VERSION_MIN_COMMANDS:
-            if command_size < 16:
-                raise BinaryError('truncated Mach-O version-min command')
+            if command_size != 16:
+                raise BinaryError('invalid Mach-O version-min command size')
             minimum, sdk = struct.unpack_from(endian + 'II', body, 8)
             source, platform = VERSION_MIN_COMMANDS[command]
             entry = {'kind': 'platform', 'name': platform, 'status': 'observed',
@@ -183,6 +192,8 @@ def inspect_dependencies(stream, file_size):
                 'scope': scope}
     if magic in THIN_MAGICS:
         info, dependencies = _thin(reader, 0, file_size)
+        if info['status'] != 'complete_static':
+            unknowns = unknowns + [_scope_note(info)]
         return {'status': info['status'], 'dependencies': dependencies, 'slices': [info],
                 'unknowns': unknowns, 'scope': scope}
     if magic not in FAT_MAGICS:
@@ -191,7 +202,8 @@ def inspect_dependencies(stream, file_size):
     wide = FAT_MAGICS[magic]
     count = struct.unpack('>I', reader.read(4, 4))[0]
     if not 1 <= count <= MAX_SLICES:
-        raise BinaryError('invalid or oversized universal binary slice count')
+        raise BinaryError('invalid or oversized universal binary slice count '
+                          '(Java class files share this magic number)')
     row = 32 if wide else 20
     table_end = 8 + count * row
     table = reader.read(8, count * row)
@@ -220,12 +232,17 @@ def inspect_dependencies(stream, file_size):
 
     slices, dependencies = [], []
     for offset, size, index in sorted(ranges, key=lambda item: item[2]):
+        if reader.read(offset, 4) not in THIN_MAGICS:
+            raise BinaryError(f'universal binary slice {index} is not a Mach-O image '
+                              '(for example a static archive)')
         info, found = _thin(reader, offset, size, {'index': index})
         if (info['cpu_type'], info['cpu_subtype']) != declared_architectures[index]:
             raise BinaryError('universal binary architecture disagrees with slice header')
         slices.append(info)
         dependencies.extend(found)
-    status = ('complete_static' if all(s['status'] == 'complete_static' for s in slices)
-              else 'partial_static')
+    decoded = [s for s in slices if s['status'] == 'complete_static']
+    status = ('complete_static' if len(decoded) == len(slices) else
+              'partial_static' if decoded else 'unsupported_object_type')
+    unknowns = unknowns + [_scope_note(s) for s in slices if s['status'] != 'complete_static']
     return {'status': status, 'dependencies': dependencies, 'slices': slices,
             'unknowns': unknowns, 'scope': scope}

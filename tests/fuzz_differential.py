@@ -39,7 +39,12 @@ import uoe.wasm as wasm  # noqa: E402
 V8_SCRIPT = ('const rows=require("fs").readFileSync(0,"utf8").split("\\n").filter(Boolean);'
              'console.log(JSON.stringify(rows.map(h=>{try{return WebAssembly.Module.imports('
              'new WebAssembly.Module(Buffer.from(h,"hex")))}catch(e){return null}})));')
-KEY = lambda row: (row['module'], row['name'], row['kind'])
+
+
+def group_by_module(rows):
+    """V8 lists imports in declaration order; uoe groups them by module in first-appearance order."""
+    order = list(dict.fromkeys(row['module'] for row in rows))
+    return [row for module in order for row in rows if row['module'] == module]
 
 
 def mutate(rng, seeds, window=None):
@@ -70,15 +75,15 @@ def fuzz_wasm(args):
     for data, expected in zip(cases, json.loads(out)):
         try:
             report = wasm.inspect_dependencies(io.BytesIO(data), len(data))
-            observed = sorted(({'module': d['name'], 'name': s['name'], 'kind': s['kind']}
-                               for d in report['dependencies'] for s in d['symbols']), key=KEY)
+            observed = [{'module': d['name'], 'name': s['name'], 'kind': s['kind']}
+                        for d in report['dependencies'] for s in d['symbols']]
         except BinaryError as exc:
             observed, error = None, str(exc)
         if expected is None:
             stats['v8_rejected_ours_accepted' if observed is not None else 'both_rejected'] += 1
         elif observed is None:
             stats['FALSE_REJECTION'] += 1; bad.append((error, data.hex()))
-        elif observed != sorted(expected, key=KEY):
+        elif observed != group_by_module(expected):
             stats['MISREPORTED'] += 1; bad.append(('imports differ', data.hex()))
         else:
             stats['both_accepted_and_agree'] += 1
@@ -111,9 +116,12 @@ def fuzz_macho(args):
         for _ in range(args.count):
             data = mutate(rng, seeds, window=2400)
             path.write_bytes(data)
-            done = subprocess.run(
-                ['llvm-objdump', '--macho', '--arch', 'all', '--dylibs-used', '--rpaths', str(path)],
-                capture_output=True, errors='replace', text=True, timeout=60)
+            def objdump(*options):
+                done = subprocess.run(['llvm-objdump', '--macho', '--arch', 'all', *options, str(path)],
+                                      capture_output=True, timeout=60)
+                return done.returncode, done.stdout.decode('utf-8', 'replace').split('\n')
+            code, lines = objdump('--dylibs-used', '--rpaths')
+            _, identity = objdump('--dylib-id')
             try:
                 report = macho.inspect_dependencies(io.BytesIO(data), len(data))
             except BinaryError:
@@ -122,14 +130,24 @@ def fuzz_macho(args):
             if report['status'] != 'complete_static':
                 stats['outside_scope_or_partial'] += 1
                 continue
-            reference = sorted(line.strip().split(' (')[0] for line in done.stdout.split('\n')
-                               if line.strip() and not line.rstrip().endswith(':')
-                               and not line.startswith(str(path)))
-            if done.returncode or not reference and report['dependencies']:
+            reference = [line.strip().split(' (')[0] for line in lines
+                         if line.strip() and not line.rstrip().endswith(':')
+                         and not line.startswith(str(path))]
+            # --dylibs-used also lists a dylib's own LC_ID_DYLIB (an identity, not a requirement).
+            for line in identity:
+                if line.strip() and not line.rstrip().endswith(':') and line.strip() in reference:
+                    reference.remove(line.strip())
+            if code or not reference and report['dependencies']:
                 stats['reference_rejected'] += 1
                 continue
-            ours = sorted(d['name'] for d in report['dependencies']
-                          if d['kind'] in ('shared_library', 'runtime_search_path'))
+            ours = [d['name'] for d in report['dependencies']
+                    if d['kind'] in ('shared_library', 'runtime_search_path')]
+            # llvm-objdump prints one name per line, so a name containing a control character
+            # (e.g. a mutated newline) cannot be compared faithfully; do not call that a disagreement.
+            if any(ord(ch) < 32 or ord(ch) == 127 for name in ours for ch in name):
+                stats['control_characters_skipped'] += 1
+                continue
+            ours, reference = sorted(ours), sorted(reference)
             if ours == reference:
                 stats['agree'] += 1
             else:
