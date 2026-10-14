@@ -146,6 +146,7 @@ class WasmDependencyTests(unittest.TestCase):
             'non-null typed global': b'\x03\x64' + leb(200) + b'\x01',
             'signed heap index 64': b'\x03\x63\xc0\x00\x00',
             'abstract heap global': b'\x03\x64\x73\x00',
+            'padded abstract heap global': b'\x03\x63\xf0\x7f\x00',
             'v128 global': b'\x03\x7b\x00',
         }
         for label, description in accepted.items():
@@ -293,11 +294,26 @@ class WasmDependencyTests(unittest.TestCase):
         self.assertFalse(plan['strategies'][0]['verified_compatible'])
         self.assertTrue(plan['unresolved'])
 
+    def test_core_header_does_not_establish_memory_address_width(self):
+        # Version 1 covers memory32 and memory64; defined memories are not scanned.
+        for data in (HEADER, HEADER + imports(entry('env', 'memory', b'\x02\x04\x01'))):
+            with self.subTest(data=data):
+                report = inspect_file(self.write(data))
+                self.assertEqual(report['binary']['architecture'], 'wasm')
+                self.assertIsNone(report['binary']['bits'])
+
     def test_inspector_wraps_malformed_modules(self):
         with self.assertRaises(InspectionError):
             inspect_file(self.write(HEADER + section(9, b'\0') + section(9, b'\0')))
         with self.assertRaises(InspectionError):
             inspect_file(self.write(b'\0asm'))
+
+    @unittest.skipUnless(shutil.which('node'), 'requires Node.js for comparison')
+    def test_padded_abstract_heap_type_matches_v8(self):
+        data = HEADER + imports(entry('env', 'callback', b'\x03\x63\xf0\x7f\x00'))
+        self.assertEqual(flatten(scan(data)['dependencies']),
+                         [(r['module'], r['name'], r['kind'])
+                          for r in v8_imports(self.write(data))])
 
     @unittest.skipUnless(shutil.which('node'), 'requires Node.js for comparison')
     def test_declared_imports_match_v8_for_synthetic_modules(self):

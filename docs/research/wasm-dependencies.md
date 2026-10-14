@@ -39,6 +39,9 @@ never a compatibility verdict.
 
 - Core module version 1 only. Component-model binaries (version bytes `0d 00 01 00`)
   are rejected as unsupported rather than guessed at.
+- The core header does not establish a memory address width. Reports use
+  `architecture: "wasm"` and `bits: null`, preserving the correction from PR #26;
+  defined memories are not analyzed and memory64 import encodings are supported.
 - Not decoded: the type section (so import *signatures* are unknown), function
   bodies, exports, the start function, element/data segments and custom-section
   payloads. No validation beyond what finding the imports requires.
@@ -68,6 +71,7 @@ byte by byte and are never instantiated:
   (a prefix ending on a section boundary is itself a valid module and must never
   report an import the full module lacks), and 2,000 seeded mutations (seed 31);
 - GC/EH reference-type encodings, accepted and rejected;
+- legal padded signed abstract heap types, independently checked against V8;
 - agreement with **V8** (`WebAssembly.Module.imports`, Node.js) on the synthetic
   golden module, on a module built by `clang --target=wasm32`, and on 3,000
   mutated modules (seed 41, 156 accepted by V8 — every one accepted by `uoe` with

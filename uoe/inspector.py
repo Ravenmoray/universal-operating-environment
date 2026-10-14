@@ -67,7 +67,7 @@ def _inspect_wasm(data: bytes):
     _need(data, 0, 8)
     if data[4:8] != b"\x01\x00\x00\x00":
         raise InspectionError("unsupported WebAssembly binary version")
-    return ("WASM", "wasm32", 32, "little", "wasm", [])
+    return ("WASM", "wasm", None, "little", "wasm", [])
 
 
 def _inspect_mach(data: bytes):

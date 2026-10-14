@@ -26,7 +26,8 @@ is deliberately not reported. (`llvm-objdump --dylibs-used` prints it as the fir
 line for dylibs; the comparison tooling accounts for that.)
 
 **Universal binaries.** The big-endian `FAT_MAGIC`/`FAT_MAGIC_64` tables are decoded,
-every slice is bounds-checked, and each slice must begin with a thin Mach-O magic.
+every slice is bounds-checked and aligned to its declared boundary, and each slice
+must begin with a thin Mach-O magic whose CPU type/subtype matches the fat table.
 `binary.slice_architectures` lists the slice architectures in file order,
 `dependency_scan.slices` holds each slice's CPU type/subtype, file type, offset, size and
 status, and every dependency carries `slice: {index, architecture}`. `plan` offers a
@@ -53,7 +54,8 @@ At most 16 slices, 4,096 load commands, 1 MiB of load-command bytes, 512 reporte
 dependencies per image, 4,096 bytes per string and 17,000,000 parser-read bytes.
 Rejected explicitly: bad magic, a command table that does not fit its image,
 command sizes below 8 or not a multiple of the pointer width, commands that overrun
-the table, string offsets outside their command, empty/unterminated/non-UTF-8 strings,
+the table or leave declared command-table bytes unconsumed, string offsets outside
+their command, empty/unterminated/non-UTF-8 strings,
 duplicate dynamic-linker commands, truncated command bodies, duplicate or overlapping
 universal slices, nonzero reserved `fat_arch_64` fields and absurd alignments.
 

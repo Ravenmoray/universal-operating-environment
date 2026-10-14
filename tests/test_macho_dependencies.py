@@ -63,7 +63,9 @@ def uuid(endian):
     return struct.pack(endian + 'II', 0x1b, 24) + bytes(range(16))
 
 
-def thin(bits=64, endian='<', cpu=X86_64, commands=None, file_type=2, subtype=3):
+def thin(bits=64, endian='<', cpu=X86_64, commands=None, file_type=2, subtype=None):
+    if subtype is None:
+        subtype = 0 if cpu == ARM64 else 3
     alignment = 8 if bits == 64 else 4
     if commands is None:
         commands = [
@@ -290,6 +292,27 @@ class MachoDependencyTests(unittest.TestCase):
             for end in range(len(data)):
                 with self.subTest(size=len(data), end=end), self.assertRaises(BinaryError):
                     scan(data[:end])
+
+    def test_universal_metadata_must_match_the_contained_image(self):
+        for wide in (False, True):
+            for cpu, subtype in ((ARM64, 3), (X86_64, 4)):
+                with self.subTest(wide=wide, cpu=cpu, subtype=subtype):
+                    with self.assertRaisesRegex(BinaryError, 'architecture'):
+                        scan(fat([(cpu, subtype, thin(cpu=X86_64, subtype=3))], wide=wide))
+
+    def test_universal_slice_must_obey_declared_alignment(self):
+        for wide in (False, True):
+            data = bytearray(fat([(X86_64, 3, thin())], wide=wide))
+            # Keep the valid offset but claim 4 KiB alignment instead of 16 bytes.
+            struct.pack_into('>I', data, 8 + (24 if wide else 16), 12)
+            with self.subTest(wide=wide), self.assertRaisesRegex(BinaryError, 'align'):
+                scan(data)
+
+    def test_declared_commands_must_consume_the_table(self):
+        data = bytearray(thin())
+        struct.pack_into('<I', data, 16, 0)
+        with self.assertRaisesRegex(BinaryError, 'command table'):
+            scan(data)
 
     def test_seeded_mutations_fail_cleanly_or_report_bounded_results(self):
         rng = random.Random(37)

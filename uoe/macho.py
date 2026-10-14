@@ -163,6 +163,8 @@ def _thin(reader, base, size, slice_info=None):
             if len(results) > MAX_DEPENDENCIES:
                 raise BinaryError('Mach-O dependency count limit exceeded')
         position += command_size
+    if position != commands_size:
+        raise BinaryError('Mach-O command table has unconsumed bytes')
     info['status'] = 'complete_static'
     return info, results
 
@@ -193,7 +195,7 @@ def inspect_dependencies(stream, file_size):
     row = 32 if wide else 20
     table_end = 8 + count * row
     table = reader.read(8, count * row)
-    ranges, seen = [], set()
+    ranges, seen, declared_architectures = [], set(), []
     for index in range(count):
         if wide:
             cpu_type, cpu_subtype, offset, size, align, reserved = struct.unpack_from(
@@ -205,9 +207,12 @@ def inspect_dependencies(stream, file_size):
                 '>IIIII', table, index * row)
         if align > 31 or offset < table_end or size < 28 or offset + size > file_size:
             raise BinaryError('invalid universal binary slice range')
+        if offset % (1 << align):
+            raise BinaryError('universal binary slice violates declared alignment')
         if (cpu_type, cpu_subtype) in seen:
             raise BinaryError('duplicate universal binary architecture')
         seen.add((cpu_type, cpu_subtype))
+        declared_architectures.append((cpu_type, cpu_subtype))
         ranges.append((offset, size, index))
     for left, right in zip(sorted(ranges), sorted(ranges)[1:]):
         if left[0] + left[1] > right[0]:
@@ -216,6 +221,8 @@ def inspect_dependencies(stream, file_size):
     slices, dependencies = [], []
     for offset, size, index in sorted(ranges, key=lambda item: item[2]):
         info, found = _thin(reader, offset, size, {'index': index})
+        if (info['cpu_type'], info['cpu_subtype']) != declared_architectures[index]:
+            raise BinaryError('universal binary architecture disagrees with slice header')
         slices.append(info)
         dependencies.extend(found)
     status = ('complete_static' if all(s['status'] == 'complete_static' for s in slices)

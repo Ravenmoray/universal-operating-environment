@@ -68,10 +68,10 @@ def _signed_leb(data, pos, bits):
 
 
 def _heap_type(data, pos):
-    if pos < len(data) and data[pos] in ABSTRACT_HEAP_TYPES:
-        return pos + 1
     index, pos = _signed_leb(data, pos, 33)
-    if index < 0:
+    # Abstract heap types are negative s33 values, including when padded.
+    # Matching only their one-byte spellings rejects legal multi-byte forms.
+    if index < 0 and index not in {byte - 128 for byte in ABSTRACT_HEAP_TYPES}:
         raise BinaryError('unsupported WASM heap type')
     return pos
 
