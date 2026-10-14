@@ -8,17 +8,13 @@ on:
       - prototype/capability-claims-v0.2
     paths:
       - "uoe/**"
-      - "tests/test_uoe_cli.py"
-      - "tests/test_claims.py"
-      - "tests/test_graph_compat.py"
+      - "tests/**"
       - "experiments/capability-graph/**"
       - ".github/workflows/uoe-prototype.yml"
   pull_request:
     paths:
       - "uoe/**"
-      - "tests/test_uoe_cli.py"
-      - "tests/test_claims.py"
-      - "tests/test_graph_compat.py"
+      - "tests/**"
       - "experiments/capability-graph/**"
       - ".github/workflows/uoe-prototype.yml"
   workflow_dispatch:
@@ -39,12 +35,14 @@ jobs:
           python-version: "3.12"
       - name: Test inspect and plan without running supplied artifacts
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Measure graph fan-out boundary (synthetic input)
+        run: timeout 20s python3 tests/benchmark_graph.py
       - name: Check CLI help
         run: python3 -m uoe --help
 
   controlled-demo:
     # Never execute C files from an untrusted pull_request checkout.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: static-inspection-tests
     runs-on: ubuntu-latest
     timeout-minutes: 5

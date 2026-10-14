@@ -2,6 +2,7 @@ name: Cross-compile Windows PE fixture
 
 on:
   push:
+    branches: [main]
     paths:
       - "experiments/missing-capability/**"
       - ".github/workflows/cross-compile-pe.yml"
@@ -12,7 +13,9 @@ permissions:
 
 jobs:
   static-pe-verification:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

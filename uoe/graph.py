@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from .json_input import load_document
 
 NODE_KINDS = {"artifact", "capability", "provider", "host", "evidence"}
 RELATIONS = {
@@ -22,6 +22,9 @@ EVIDENCE_TYPES = {
 RESULTS = {"pass", "fail", "not_applicable"}
 MAX_BYTES = 1_000_000
 MAX_OBJECTS = 10_000
+MAX_STRING = 4096
+MAX_REFERENCES = 64
+MAX_CANDIDATE_PAIRS = 100_000
 
 
 class GraphError(ValueError):
@@ -29,7 +32,7 @@ class GraphError(ValueError):
 
 
 def _nonempty(value):
-    return isinstance(value, str) and bool(value.strip())
+    return isinstance(value, str) and len(value) <= MAX_STRING and bool(value.strip())
 
 
 def _fail(message):
@@ -59,7 +62,7 @@ def validate(graph):
             _fail("invalid node identity or kind")
         if ident in nodes:
             _fail("duplicate node ID: " + ident)
-        if "label" in node and not isinstance(node["label"], str):
+        if "label" in node and (not isinstance(node["label"], str) or len(node["label"]) > MAX_STRING):
             _fail("node label must be string")
         if kind == "evidence":
             if set(node) - {"id", "kind", "label", "evidence_type", "reference", "result", "scope"}:
@@ -102,6 +105,7 @@ def validate(graph):
             _fail("invalid edge node kinds")
         references = edge["evidence"]
         if (not isinstance(references, list) or not references
+                or len(references) > MAX_REFERENCES
                 or any(not _nonempty(r) for r in references)
                 or len(references) != len(set(references))):
             _fail("invalid edge evidence references")
@@ -139,6 +143,14 @@ def plan(graph, artifact_id, host_id):
             hosts_by_provider.setdefault(e["source"], []).append(e)
 
     required.sort(key=lambda e: (e["target"], e["id"]))
+    # Check the total join work before allocating any candidate pairs. Parallel
+    # edges otherwise produce quadratic fan-out even in a small JSON document.
+    pairs_by_capability = {
+        cap: sum(len(hosts_by_provider.get(edge["source"], [])) for edge in edges)
+        for cap, edges in providers_by_capability.items()
+    }
+    if sum(pairs_by_capability.get(req["target"], 0) for req in required) > MAX_CANDIDATE_PAIRS:
+        _fail("candidate pair budget exceeded")
     results = []
     for req in required:
         candidates = []
@@ -178,10 +190,7 @@ def plan(graph, artifact_id, host_id):
 
 
 def load_graph(path):
-    candidate = Path(path)
-    if candidate.stat().st_size > MAX_BYTES:
-        _fail("file exceeds experimental byte limit")
-    graph = json.loads(candidate.read_text(encoding="utf-8"))
+    graph = load_document(path, MAX_BYTES, GraphError)
     validate(graph)
     return graph
 

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 
+from .json_input import load_document
 from .graph import GraphError, load_graph, plan as graph_plan, validate as validate_graph
 
 CLAIMS_VERSION = "uoe.claims.v0.2"
@@ -74,10 +75,7 @@ def validate_claims(claims: dict, actual_digest: str) -> None:
 
 
 def load_claims(path: str | Path, actual_digest: str) -> dict:
-    path = Path(path)
-    if path.stat().st_size > MAX_CLAIMS_BYTES:
-        _fail("claims file exceeds 1 MiB")
-    content = json.loads(path.read_text(encoding="utf-8"))
+    content = load_document(path, MAX_CLAIMS_BYTES, ClaimError)
     validate_claims(content, actual_digest)
     return content
 
