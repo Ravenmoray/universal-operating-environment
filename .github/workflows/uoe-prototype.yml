@@ -10,12 +10,16 @@ on:
       - "uoe/**"
       - "tests/test_uoe_cli.py"
       - "tests/test_claims.py"
+      - "tests/test_graph_compat.py"
+      - "experiments/capability-graph/**"
       - ".github/workflows/uoe-prototype.yml"
   pull_request:
     paths:
       - "uoe/**"
       - "tests/test_uoe_cli.py"
       - "tests/test_claims.py"
+      - "tests/test_graph_compat.py"
+      - "experiments/capability-graph/**"
       - ".github/workflows/uoe-prototype.yml"
   workflow_dispatch:
 
