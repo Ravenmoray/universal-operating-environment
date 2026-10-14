@@ -52,15 +52,17 @@ The original vision—'Any software. Any computer. One intelligent environment.'
 
 ## Next delivery sequence
 
-PRs #11 and #20 are merged: v0.2 is the current development baseline on `main`.
+PRs #11 and #20 established the v0.2 baseline. Shared graph hardening is merged
+and the first v0.3 increment adds ELF interpreter/direct-library observations.
 No tagged release or production compatibility claim is implied.
 
-1. **Stabilize the shared graph implementation (#21).** Keep one validator/planner
+1. **Continue hardening the shared graph implementation (#21).** The single validator,
+   bounded JSON reader, candidate-pair budget and initial mutation tests are implemented. Keep one validator/planner
    in `uoe.graph`, with the original experiment as a compatibility entry point.
    Run old and new tests in CI whenever that implementation changes. Keep #21
    open for bounded performance/fuzz work and the remaining trust-boundary audit.
-2. **Deliver v0.3 in small parser PRs (#13), starting with ELF.** First extract
-   PT_INTERP and DT_NEEDED from project-owned fixtures without execution. Require
+2. **Deliver v0.3 in small parser PRs (#13).** The ELF PT_INTERP/DT_NEEDED
+   increment is implemented and compared with readelf on project-owned fixtures. Continue expanding
    32/64-bit and endian fixtures, malformed offsets/lengths/string tables, explicit
    dynamic-loading unknowns, and independent comparison with established tooling.
    Then add PE, WASM and Mach-O support separately. Do not call the full v0.3

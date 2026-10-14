@@ -45,7 +45,7 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
     if fmt == "ELF":
         add("native", host_os == "linux" and same_arch,
             "Linux ELF native loader may work only with a matching architecture and OS ABI",
-            ["ELF interpreter, linked libraries and runtime behavior still unknown"])
+            ["Observed interpreter/library names still require host resolution and behavioral tests"])
     elif fmt == "PE":
         if host_os == "windows":
             add("native", same_arch,
@@ -83,6 +83,7 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
             x["state"] == "candidate" for x in strategies
         ) else "unresolved",
         "unresolved": inspection["unknowns"],
+        "observed_requirements": inspection.get("static_dependencies", []),
         "execution_attempted": False,
         "note": ("Presence of a compatible-format runtime is not proof that the "
                  "application can execute correctly or safely. All launch "

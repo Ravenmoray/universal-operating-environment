@@ -2,7 +2,7 @@
 
 **Any software. Any computer. One intelligent environment.**
 
-> **Status:** Working v0.2 research prototype on `main`. Static inspection, digest-bound capability planning, and a controlled fixture demonstration are implemented. Universal execution and autonomous management remain goals.
+> **Status:** Working research prototype on `main`, with the first v0.3 ELF inspection increment. Static dependency observations, digest-bound capability planning, and a controlled fixture demonstration are implemented. Universal execution and autonomous management remain goals.
 
 UOE is an open-source effort to develop an AI-native operating environment that understands software requirements, selects or constructs execution strategies, and retains verified knowledge about how its components work.
 
@@ -37,9 +37,11 @@ A program labeled “Windows only” or “macOS only” presents a *compatibili
 ## Current milestone
 
 The CLI inspects ELF, PE, Mach-O and WASM headers without executing the input,
+including ELF interpreter and direct shared-library requirements,
 then proposes runtime and capability-provider candidates. The explicit `demo`
-command runs only reviewed project-owned fixtures. Dependencies are currently
-supplied through declarations; real binary import extraction is the next feature.
+command runs only reviewed project-owned fixtures. Capability contracts still use explicit declarations; observed library names do
+not establish those contracts. PE, WASM and Mach-O dependency extraction remain
+future work. See [ELF scope and test evidence](docs/research/elf-dependencies.md).
 
 Start with the [working prototype guide](docs/research/working-prototype.md).
 The [next delivery sequence](docs/roadmap/v1-delivery-plan.md#next-delivery-sequence)

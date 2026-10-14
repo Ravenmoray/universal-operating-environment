@@ -21,7 +21,9 @@ def example():
     file_data[0:4] = b"\x7fELF"
     file_data[4] = 2
     file_data[5] = 1
-    struct.pack_into("<H", file_data, 18, 62)
+    file_data[6] = 1
+    struct.pack_into("<HHI", file_data, 16, 2, 62, 1)
+    struct.pack_into("<H", file_data, 52, 64)
     content = bytes(file_data)
     digest = hashlib.sha256(content).hexdigest()
     capability = "capability:example.hello@1"
