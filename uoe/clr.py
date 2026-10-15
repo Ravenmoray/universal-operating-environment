@@ -44,7 +44,7 @@ CODED = {
 
 # Column types: an int is a fixed byte width; 'S' 'G' 'B' are #Strings/#GUID/#Blob
 # heap indexes; ('T', id) is a simple index into table id; ('C', name) a coded index.
-# Tables 0x00-0x22 are all that precede AssemblyRef, so only they are described.
+# Tables 0x00-0x23 (through AssemblyRef) are all that must be described.
 SCHEMA = {
     0x00: [2, 'S', 'G', 'G', 'G'],                                              # Module
     0x01: [('C', 'ResolutionScope'), 'S', 'S'],                                 # TypeRef
@@ -208,10 +208,20 @@ def inspect_clr(reader, locate, rva, size):
         if cursor > table_length:
             raise BinaryError('CLR table data outside the table stream')
 
+    checked = set()
+
     def heap(name):
         if name not in streams:
             raise BinaryError(f'CLR metadata lacks the {name} stream')
-        return streams[name]
+        start, length = streams[name]
+        # ECMA-335 II.24.2.3-4: entry 0 of #Strings and #Blob is the empty string / blob, so
+        # index 0 means "none". A heap that starts with anything else would turn a null
+        # index into a made-up name, culture or key, so refuse it once, when first used.
+        if name in ('#Strings', '#Blob') and name not in checked:
+            if length and at(start, 1) != b'\0':
+                raise BinaryError(f'CLR {name} heap does not begin with the empty entry')
+            checked.add(name)
+        return start, length
 
     def text(index):
         start, length = heap('#Strings')
@@ -271,7 +281,7 @@ def inspect_clr(reader, locate, rva, size):
         if not name:
             raise BinaryError('empty CLR assembly reference name')
         culture, _ = text(culture_index)
-        key = blob(key_index)  # index 0 is the empty blob only if the heap's first byte is 0
+        key = blob(key_index)
         if not key:
             token = None
         elif asm_flags & ASSEMBLY_FLAG_PUBLIC_KEY:

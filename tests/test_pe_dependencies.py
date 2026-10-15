@@ -56,7 +56,7 @@ def with_delay(bits=64, attributes=1):
     return blob
 
 
-def big_import_fixture(count, bits=64):
+def big_import_fixture(count, bits=64, dll_name=b'big.dll'):
     """A PE whose single import descriptor names ``count`` symbols from one DLL.
 
     Realistic size: short names, one hint/name entry each, so the read budget (not the
@@ -71,9 +71,9 @@ def big_import_fixture(count, bits=64):
         offsets.append(entries_at + len(entries))
         name = f'f{i:05d}'.encode() + b'\0'
         entries += struct.pack('<H', i & 0xffff) + name + (b'\0' if len(name) % 2 else b'')
-    content = bytearray(entries_at) + entries
-    struct.pack_into('<IIIII', content, 0, 0x1000 + ilt, 0, 0, 0x1000 + 0x40, 0x1000 + iat)
-    content[0x40:0x48] = b'big.dll\0'
+    name_at = entries_at + len(entries)
+    content = bytearray(entries_at) + entries + dll_name + b'\0'
+    struct.pack_into('<IIIII', content, 0, 0x1000 + ilt, 0, 0, 0x1000 + name_at, 0x1000 + iat)
     thunk = '<Q' if bits == 64 else '<I'
     for table in (ilt, iat):
         for i, offset in enumerate(offsets):
@@ -138,6 +138,22 @@ class PeDependencyTests(unittest.TestCase):
         self.assertNotIn('example.dll', notes.split('Delay-loaded DLLs')[1])
         self.assertFalse(plan['strategies'][0]['verified_compatible'])
 
+    def test_planner_notes_reach_every_host_and_list_delay_dlls_in_sorted_order(self):
+        from uoe.planner import plan_inspection
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'delayed.exe'
+            path.write_bytes(with_delay())
+            report = inspect_file(path)
+        for name in ('zeta.dll', 'alpha.dll'):                  # appended out of order
+            report['static_dependencies'].append({'kind': 'shared_library', 'name': name, 'status': 'observed',
+                                                  'load_kind': 'delay', 'symbols': []})
+        for host_os in ('linux', 'windows', 'macos'):
+            plan = plan_inspection(report, host_os=host_os, host_arch='x86_64', available={'wine': True})
+            notes = ' '.join(plan['strategies'][0]['constraints'])
+            with self.subTest(host_os):
+                self.assertIn('alpha.dll, delayed.dll, zeta.dll', notes)
+                self.assertFalse(plan['strategies'][0]['verified_compatible'])
+
     def test_delay_only_binaries_have_no_normal_imports(self):
         data = with_delay()
         directory = 0x98 + 112
@@ -148,26 +164,38 @@ class PeDependencyTests(unittest.TestCase):
 
     def test_malformed_delay_descriptors_are_rejected(self):
         directory = 0x98 + 112
+        backed, incomplete = 'not uniquely file-backed', 'incomplete PE delay-import descriptor'
+        inconsistent = 'inconsistent PE delay-import directory'
         cases = {
-            'reserved attribute bits': lambda b: struct.pack_into('<I', b, 0x300, 3),
-            'no dll name': lambda b: struct.pack_into('<I', b, 0x304, 0),
-            'no name table': lambda b: struct.pack_into('<I', b, 0x310, 0),
-            'no address table': lambda b: struct.pack_into('<I', b, 0x30c, 0),
-            'directory rva without size': lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 0),
-            'directory size without rva': lambda b: struct.pack_into('<II', b, directory + 13 * 8, 0, 64),
-            'unterminated directory': lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 32),
-            'name outside file': lambda b: struct.pack_into('<I', b, 0x304, 0xfffff000),
-            'name table outside file': lambda b: struct.pack_into('<I', b, 0x310, 0xfffff000),
-            'name table runs off its section': lambda b: (
+            'reserved attribute bits': (lambda b: struct.pack_into('<I', b, 0x300, 3), 'descriptor attributes'),
+            'no dll name': (lambda b: struct.pack_into('<I', b, 0x304, 0), incomplete),
+            'no name table': (lambda b: struct.pack_into('<I', b, 0x310, 0), incomplete),
+            'no address table': (lambda b: struct.pack_into('<I', b, 0x30c, 0), incomplete),
+            'directory rva without size': (lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 0), inconsistent),
+            'directory size without rva': (lambda b: struct.pack_into('<II', b, directory + 13 * 8, 0, 64), inconsistent),
+            'unterminated directory': (lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 32),
+                                       'unterminated or oversized PE delay-import directory'),
+            'directory larger than its section': (lambda b: struct.pack_into('<I', b, directory + 13 * 8 + 4, 0x4000), backed),
+            'name outside file': (lambda b: struct.pack_into('<I', b, 0x304, 0xfffff000), backed),
+            'name table outside file': (lambda b: struct.pack_into('<I', b, 0x310, 0xfffff000), backed),
+            'name table runs off its section': (lambda b: (
                 struct.pack_into('<I', b, 0x310, 0x13f8),
-                struct.pack_into('<Q', b, 0x5f8, (1 << 63) | 3)),
-            'ordinal reserved bits': lambda b: struct.pack_into('<Q', b, 0x368, (1 << 63) | (1 << 40) | 7),
+                struct.pack_into('<Q', b, 0x5f8, (1 << 63) | 3)), backed),
+            'ordinal reserved bits': (lambda b: struct.pack_into('<Q', b, 0x368, (1 << 63) | (1 << 40) | 7),
+                                      'ordinal reserved bits'),
         }
-        for label, mutate in cases.items():
+        for label, (mutate, pattern) in cases.items():
             data = with_delay()
             mutate(data)
-            with self.subTest(label), self.assertRaises(BinaryError):
+            with self.subTest(label), self.assertRaisesRegex(BinaryError, pattern):
                 scan(data)
+
+    def test_directory_sizes_must_be_file_backed_for_imports_and_delay_imports(self):
+        # The declared extent of a descriptor directory is located as a whole, not just its start.
+        data = with_delay()
+        struct.pack_into('<I', data, 0x98 + 112 + 8 + 4, 0x4000)           # import directory
+        with self.assertRaisesRegex(BinaryError, 'not uniquely file-backed'):
+            scan(data)
 
     def test_legacy_pointer_based_delay_descriptors_are_unknowns_not_failures(self):
         data = with_delay(attributes=0)
@@ -207,17 +235,77 @@ class PeDependencyTests(unittest.TestCase):
         with patch.object(pe, 'Reader', Recording):
             inspect_dependencies(io.BytesIO(data), len(data))
         used = 8_000_000 - spent[0].remaining
-        # 2,300 names of 7 bytes: two 8-byte thunk tables, the hint/name entries and one
-        # 64-byte chunk per name. Charging the 4,097-byte worst case per name would be ~9.4 MB.
-        self.assertLess(used, 2_000_000)
+        # 2,300 names of 7 bytes: one 64-byte chunk per name, plus the lookup table thunks and
+        # hints (measured: about 170,000). Charging the 4,097-byte worst case per name would be
+        # ~9.4 MB, so a loose bound would still catch it but not a chunk size creeping upwards.
+        self.assertLess(used, 250_000)
         self.assertGreater(used, 2300 * 64)
 
+    def test_import_names_may_be_exactly_the_documented_length(self):
+        # MAX_NAME bytes plus the NUL fit; one more byte does not. A name that ends exactly at
+        # the end of the allowance is the boundary that a chunked reader gets wrong.
+        for length, accepted in ((pe.MAX_NAME, True), (pe.MAX_NAME + 1, False)):
+            data = big_import_fixture(2, dll_name=b'd' * length)
+            with self.subTest(length=length):
+                if accepted:
+                    self.assertEqual(scan(data)['dependencies'][0]['name'], 'd' * length)
+                else:
+                    with self.assertRaisesRegex(BinaryError, 'empty, overlong or unterminated PE import name'):
+                        scan(data)
+
+    def test_reader_cstring_semantics(self):
+        from uoe.binary_input import Reader, StringError
+
+        def read(data, offset=0, available=None, limit=4096, **kw):
+            reader = Reader(io.BytesIO(data), len(data))
+            return reader.cstring(offset, len(data) - offset if available is None else available, limit, **kw), reader
+        # the NUL in the first/last byte of a chunk and the first byte of the next
+        for length in (0, 1, 62, 63, 64, 65, 127, 128, 129):
+            with self.subTest(length=length):
+                value, _ = read(b'a' * length + b'\0' + b'tail')
+                self.assertEqual(value, b'a' * length)
+        # the allowance: `limit` bytes plus the NUL are fine, one more byte is not
+        self.assertEqual(read(b'a' * 10 + b'\0', limit=10)[0], b'a' * 10)
+        with self.assertRaises(StringError):
+            read(b'a' * 11 + b'\0', limit=10)
+        self.assertEqual(read(b'\0', limit=0)[0], b'')
+        with self.assertRaises(StringError):
+            read(b'a\0', limit=0)
+        # the region ends before the NUL (a NUL beyond `available` must not be found)
+        with self.assertRaises(StringError):
+            read(b'abcdef\0', available=6)
+        self.assertEqual(read(b'abcdef\0', available=7)[0], b'abcdef')
+        with self.assertRaises(StringError):
+            read(b'\0abc', available=0)
+        # an offset inside a larger buffer, and the budget is charged for what was read
+        value, reader = read(b'xx' + b'name\0' + b'z' * 200, offset=2)
+        self.assertEqual((value, reader.remaining), (b'name', 8_000_000 - 64))
+        value, reader = read(b'name\0', offset=0)
+        self.assertEqual((value, reader.remaining), (b'name', 8_000_000 - 5))
+
     def test_a_bound_import_with_a_lookup_table_is_read_from_the_lookup_table(self):
-        data = fixture()
-        struct.pack_into('<I', data, 0x204, 0x5f5e100)         # TimeDateStamp != 0 marks a bound import
-        row = scan(data)['dependencies'][0]
-        self.assertEqual([x.get('name') for x in row['symbols']], ['DoWork', None])
-        self.assertEqual(row['symbols'][1]['ordinal'], 42)
+        # In a bound image the IAT holds resolved addresses, so only the lookup table has names.
+        for bits in (32, 64):
+            for stamp in (0, 0x5f5e100):               # TimeDateStamp != 0 marks a bound import
+                data = fixture(bits)
+                struct.pack_into('<I', data, 0x204, stamp)
+                struct.pack_into('<QQQ' if bits == 64 else '<III', data, 0x2e0,
+                                 0x7ff812340000 if bits == 64 else 0x77001000,
+                                 0x7ff812340010 if bits == 64 else 0x77001010, 0)
+                with self.subTest(bits=bits, stamp=stamp):
+                    row = scan(data)['dependencies'][0]
+                    self.assertEqual([x.get('name') for x in row['symbols']], ['DoWork', None])
+                    self.assertEqual(row['symbols'][1]['ordinal'], 42)
+
+    def test_delay_names_come_from_the_name_table_not_the_address_table(self):
+        for bits in (32, 64):
+            data = with_delay(bits)
+            struct.pack_into('<QQQ' if bits == 64 else '<III', data, 0x3a0,       # bound delay IAT
+                             0x7ff812340000 if bits == 64 else 0x77001000,
+                             0x7ff812340010 if bits == 64 else 0x77001010, 0)
+            with self.subTest(bits=bits):
+                delayed = scan(data)['dependencies'][1]
+                self.assertEqual([x.get('name') for x in delayed['symbols']], ['LazyCall', None])
 
     def test_truncation_inside_the_delay_tables_reaches_the_delay_parser(self):
         # The every-truncation test fails at the PE section check. Here the file stays whole but
@@ -234,7 +322,8 @@ class PeDependencyTests(unittest.TestCase):
             plain = bytearray(no_delay[:0x200 + cut])
             struct.pack_into('<I', plain, section + 16, cut)
             self.assertEqual(len(scan(bytes(plain))['dependencies']), 1, cut)    # normal import survives
-            with self.subTest(cut=cut), self.assertRaises(BinaryError):
+            with self.subTest(cut=cut), self.assertRaisesRegex(
+                    BinaryError, 'not uniquely file-backed|empty, overlong or unterminated PE import name'):
                 scan(bytes(cropped))
         whole = bytearray(data[:0x200 + 0x18b])
         struct.pack_into('<I', whole, section + 16, 0x18b)

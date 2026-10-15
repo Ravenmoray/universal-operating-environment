@@ -47,9 +47,9 @@ let a reviewer find the exact bytes with an independent tool.
 | `wasm_import_module` | WASM | import module name (may be `""`) | `symbols` (`name`, `kind`, `type_index`/`mutable`), optional `interface_hint` | `WASM_IMPORT_SECTION` |
 | `runtime_search_path` | Mach-O | an `LC_RPATH` entry | — | `LC_RPATH` |
 | `platform` | Mach-O | `macos`, `ios`, … or `unknown:N` | `minimum_os_version`, `sdk_version` | `LC_BUILD_VERSION`, `LC_VERSION_MIN_*` |
-| `managed_runtime` | PE (.NET) | CLR metadata version string, e.g. `v4.0.30319` | `cor_header_version`, `flags`, `flags_raw` | `IMAGE_COR20_HEADER` |
+| `managed_runtime` | PE (.NET) | CLR metadata version string, e.g. `v4.0.30319` (a format version, not the runtime or framework the image needs) | `cor_header_version`, `flags`, `flags_raw` | `IMAGE_COR20_HEADER` |
 | `managed_assembly` | PE (.NET) | referenced assembly name | `version`, `culture`, `public_key_token` | `METADATA_ASSEMBLYREF` |
-| `native_module_reference` | PE (.NET) | native module named by P/Invoke (`ModuleRef`) | — | `METADATA_MODULEREF` |
+| `native_module_reference` | PE (.NET) | a `ModuleRef` row: usually a native library named by a P/Invoke declaration, but also a secondary module of a multi-module assembly (the `ImplMap` table that tells them apart is not read) | — | `METADATA_MODULEREF` |
 
 In universal Mach-O files each entry also has `slice: {index, architecture}`.
 
@@ -61,7 +61,10 @@ the token computed from the full public key when the reference carries one. For
 `managed_runtime`, `flags` names the recognised `COMIMAGE_FLAGS_*` bits (unrecognised
 bits appear as `unknown:0x…`) and `flags_raw` is the unmodified header value.
 `native_module_reference` names are written as the metadata gives them (for example
-`kernel32.dll` or `libdl.so`), not resolved to a file.
+`kernel32.dll` or `libdl.so`), not resolved to a file. The `managed_runtime` string is the
+same `v4.0.30319` for `Python.Runtime.dll` (which references `netstandard` 2.0) and for
+`ClrLoader.dll` (which references `mscorlib` 4.0.0.0), so it does not identify what the
+image requires; the target framework is a custom attribute that is not decoded.
 
 Names are exactly what the file says. A name is **not** a verified capability
 contract, does not show the library is installed, and is not resolved against any

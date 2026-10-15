@@ -109,6 +109,10 @@ def observed_pe(report):
             for d in report['static_dependencies'] if d['kind'] == 'shared_library']
 
 
+class ReferenceIncomplete(Exception):
+    """dnfile read the file only partly, so it cannot serve as a reference for it."""
+
+
 def clr_facts(dn):
     """Assembly references and module references of a parsed ``dnfile.dnPE``, as uoe reports them."""
     import hashlib
@@ -116,13 +120,13 @@ def clr_facts(dn):
     def text(item):
         return item.value.decode() if isinstance(item.value, bytes) else item.value
     if dn.net.metadata.struct.NumberOfStreams != len(dn.net.metadata.streams_list):
-        raise ValueError('dnfile stopped before reading every declared metadata stream')
+        raise ReferenceIncomplete('dnfile stopped before reading every declared metadata stream')
     for stream in dn.net.metadata.streams_list:
         # dnfile matches the whole 8-byte padded name field, so a stream whose NUL padding is
         # not all zero (which CoreCLR and uoe accept) falls into a generic stream and is lost.
         if type(stream).__name__ == 'GenericStream' and bytes(stream.struct.Name).split(b'\0')[0] in (
                 b'#~', b'#-', b'#Strings', b'#US', b'#GUID', b'#Blob'):
-            raise ValueError('dnfile did not recognise a standard metadata stream')
+            raise ReferenceIncomplete('dnfile did not recognise a standard metadata stream')
     tables = dn.net.mdtables
     assemblies = []
     for row in (tables.AssemblyRef.rows if tables.AssemblyRef else []):
@@ -141,8 +145,12 @@ def reference_clr(path):
     except ImportError:
         return None
     try:
-        return clr_facts(dnfile.dnPE(str(path)))
-    except Exception:
+        parsed = dnfile.dnPE(str(path))
+    except Exception:       # dnfile itself could not parse the file
+        return 'rejected'
+    try:
+        return clr_facts(parsed)
+    except ReferenceIncomplete:
         return 'rejected'
 
 

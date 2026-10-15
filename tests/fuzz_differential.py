@@ -21,8 +21,13 @@ Mutated copies of small seed inputs are only *parsed*, never executed:
 
 uoe is deliberately stricter than the references in a few places (non-UTF-8
 strings, resource budgets, unsupported file types); those rejections are counted,
-not failures. Any V8-accepted module that uoe rejects or misreports, and any
-disagreeing Mach-O list or CLR fact, and any exception other than a clean rejection, exits with status 1 and prints the offending input in hex.
+not failures. Any V8-accepted module that uoe rejects or misreports, any disagreeing
+Mach-O list or CLR fact, and any exception other than a clean rejection exits with status 1
+and writes each offending input to a temporary file whose path is printed (a run is
+reproducible from the format, --seed, --count and the --seed-file arguments *in the same
+order*: the order is part of the seed). Status 2 means the run could not be set up (a
+missing reference tool, an unusable seed, or, for clr, a reference that cannot judge the
+untouched seeds or compared too few inputs to mean anything).
 Results describe the seeds, count and tool versions used; they are not a coverage claim.
 """
 import argparse
@@ -89,6 +94,8 @@ def fuzz_wasm(args):
                         for d in report['dependencies'] for s in d['symbols']]
         except BinaryError as exc:
             observed, error = None, str(exc)
+        except Exception as exc:  # anything but a clean rejection is a defect
+            stats['CRASH'] += 1; bad.append((repr(exc), data.hex())); continue
         if expected is None:
             stats['v8_rejected_ours_accepted' if observed is not None else 'both_rejected'] += 1
         elif observed is None:
@@ -137,6 +144,8 @@ def fuzz_macho(args):
             except BinaryError:
                 stats['uoe_rejected'] += 1
                 continue
+            except Exception as exc:  # anything but a clean rejection is a defect
+                stats['CRASH'] += 1; bad.append((repr(exc), data.hex())); continue
             if report['status'] != 'complete_static':
                 stats['outside_scope_or_partial'] += 1
                 continue
@@ -183,6 +192,14 @@ def clr_regions(data):
     return header, to_file(metadata_rva), metadata_size
 
 
+def uoe_clr_facts(data):
+    """(assembly references, module references) as uoe reports them; raises BinaryError on rejection."""
+    report = pe.inspect_dependencies(io.BytesIO(data), len(data))
+    return ([(d['name'], d['version'], d['culture'], d['public_key_token'])
+             for d in report['dependencies'] if d['kind'] == 'managed_assembly'],
+            [d['name'] for d in report['dependencies'] if d['kind'] == 'native_module_reference'])
+
+
 def fuzz_clr(args):
     try:
         import dnfile
@@ -196,7 +213,26 @@ def fuzz_clr(args):
     synthetic = [managed_pe(build_metadata(ASSEMBLIES, modules=('native.dll',)), bits=64),
                  managed_pe(build_metadata(ASSEMBLIES, modules=('native.dll', 'second.dll'), wide_heaps=7), bits=32),
                  managed_pe(build_metadata(ASSEMBLIES[:2]))]
-    seeds = [(data, *clr_regions(data)) for data in synthetic + [Path(p).read_bytes() for p in args.seed_file]]
+    seeds = []
+    for data in synthetic + [Path(p).read_bytes() for p in args.seed_file]:
+        try:
+            seeds.append((data, *clr_regions(data)))
+        except (ValueError, struct.error, IndexError):
+            print('a --seed-file is not a managed PE (no readable CLR header and metadata)'); return 2
+    # The untouched seeds must be accepted by uoe and read identically by the reference. This is
+    # what proves the reference works: below, any failure of dnfile is otherwise indistinguishable
+    # from a bug in this harness.
+    for number, (data, *_) in enumerate(seeds):
+        try:
+            ours = uoe_clr_facts(data)
+        except BinaryError as exc:
+            print(f'seed {number} is rejected by uoe: {exc}'); return 2
+        try:
+            expected = clr_facts(dnfile.dnPE(data=data))
+        except Exception as exc:
+            print(f'the reference cannot read seed {number}: {exc!r}'); return 2
+        if ours != expected:
+            print(f'seed {number}: uoe {ours} != reference {expected}'); return 1
     rng = random.Random(args.seed)
     stats, reasons, bad = collections.Counter(), collections.Counter(), []
     for _ in range(args.count):
@@ -210,10 +246,7 @@ def fuzz_clr(args):
             data[position] = rng.choice((0, 0xff, 0x80, 1)) if rng.random() < 0.3 else rng.randrange(256)
         data = bytes(data)
         try:
-            report = pe.inspect_dependencies(io.BytesIO(data), len(data))
-            ours = ([(d['name'], d['version'], d['culture'], d['public_key_token'])
-                     for d in report['dependencies'] if d['kind'] == 'managed_assembly'],
-                    [d['name'] for d in report['dependencies'] if d['kind'] == 'native_module_reference'])
+            ours = uoe_clr_facts(data)
             error = None
         except BinaryError as exc:
             ours, error = None, str(exc)
@@ -237,13 +270,21 @@ def fuzz_clr(args):
     code = finish(stats, bad)
     for reason, count in reasons.most_common(8):
         print(f'   stricter: {count:5}  {reason}')
+    # One-sided contracts pass trivially if nothing is ever compared, so insist on a minimum.
+    if args.count >= 100 and stats['both_accepted_and_agree'] * 20 < args.count:
+        print(f'only {stats["both_accepted_and_agree"]} of {args.count} inputs were accepted by both and compared '
+              '(fewer than 5%): the reference or the harness is not working'); return code or 2
     return code
 
 
 def finish(stats, bad):
     print(json.dumps(dict(stats), sort_keys=True))
-    for reason, data in bad[:5]:
-        print('  ', reason, data[:240])
+    if bad:
+        folder = Path(tempfile.mkdtemp(prefix='uoe-fuzz-'))
+        for number, (reason, data) in enumerate(bad[:5]):
+            (folder / f'case-{number}.bin').write_bytes(bytes.fromhex(data))
+            print(f'   {reason[:300]}\n   -> {folder / f"case-{number}.bin"}')
+        print(f'   {len(bad)} offending input(s); the first {min(5, len(bad))} are in {folder}')
     return 1 if bad else 0
 
 
