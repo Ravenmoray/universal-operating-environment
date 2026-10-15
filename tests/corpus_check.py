@@ -82,6 +82,8 @@ def reference_elf(path):
     if not shutil.which('readelf'):
         return None
     dynamic, headers = run(['readelf', '-dW', str(path)]), run(['readelf', '-lW', str(path)])
+    if dynamic.returncode or headers.returncode:
+        return 'rejected'       # empty output from a failed run must not pass as "no libraries"
     return (re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic.stdout),
             re.findall(r'Requesting program interpreter: (.*?)\]', headers.stdout))
 
@@ -95,7 +97,10 @@ def observed_elf(report):
 def reference_pe(path):
     if not shutil.which('llvm-readobj'):
         return None
-    out = run(['llvm-readobj', '--coff-imports', str(path)]).stdout
+    done = run(['llvm-readobj', '--coff-imports', str(path)])
+    if done.returncode:
+        return 'rejected'       # empty output from a failed run must not pass as "no imports"
+    out = done.stdout
     # Top-level blocks start in column 0; nested "  Import {" entries inside a
     # DelayImport block are indented and are not separate DLLs.
     blocks = re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S | re.M)

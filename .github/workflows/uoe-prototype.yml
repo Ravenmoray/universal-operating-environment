@@ -72,6 +72,8 @@ jobs:
       - name: Format tests with every independent reference present
         shell: bash
         run: |
+          # Without pipefail the pipeline below would report tee's status, not the tests'.
+          set -o pipefail
           python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies tests.test_pe_dependencies tests.test_clr_dependencies tests.test_corpus_check -v 2>&1 | tee unittest.log
           # This job exists for the independent references. A comparison that was skipped (a
           # missing tool, or a failed LLVM build) must fail it rather than look green.

@@ -69,6 +69,31 @@ class CorpusCheckPeTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('disagreed', output.getvalue())
 
+    def test_a_failed_reference_run_is_not_a_match(self):
+        # If llvm-readobj / readelf fail, their empty stdout used to parse as "no imports" and
+        # "match" a file for which uoe also reports none. That must be an unusable comparison.
+        import contextlib
+        import corpus_check
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from test_pe_dependencies import fixture
+        failed = lambda command: SimpleNamespace(returncode=1, stdout='', stderr='boom')
+        with patch.object(corpus_check, 'run', failed), \
+                patch.object(corpus_check.shutil, 'which', lambda name: '/usr/bin/' + name):
+            self.assertEqual(corpus_check.reference_pe('x.exe'), 'rejected')
+            self.assertEqual(corpus_check.reference_elf('x'), 'rejected')
+            # end to end: a PE with no imports, whose reference run fails, is not counted as matched
+            data = fixture()
+            data[0x98 + 112 + 8:0x98 + 112 + 16] = bytes(8)        # no import directory
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, 'none.exe').write_bytes(bytes(data))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = corpus_check.main([tmp])
+        self.assertEqual(code, 0, output.getvalue())
+        self.assertIn('reference_also_rejected=1', output.getvalue())
+        self.assertNotIn('matched', output.getvalue())
+
     @unittest.skipUnless(dnfile and shutil.which('llvm-readobj'), 'requires dnfile and llvm-readobj')
     def test_managed_pe_is_compared_with_dnfile(self):
         from test_clr_dependencies import ASSEMBLIES, build_metadata, managed_pe

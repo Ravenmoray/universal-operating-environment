@@ -289,6 +289,20 @@ those findings were reproduced by hand instead of being accepted or dismissed. F
   `native_module_reference` may also be a secondary module of a multi-module assembly or
   that `managed_runtime` is a metadata version string, not a framework requirement.
 
+**Owner review on the pull request** (after the two rounds above). Fixed:
+
+- The main-only job piped `unittest` into `tee` and relied on `shell: bash` to add
+  `pipefail`. Run under a plain `bash -e`, the same script exits 0 with a failing test (this
+  was reproduced); the script now sets `pipefail` itself and keeps the guard on the eight
+  named tests.
+- `corpus_check.py` parsed the output of `llvm-readobj` and `readelf` without checking their
+  exit status, so a failed run looked like "no imports/libraries" and "matched" a file for
+  which `uoe` also reported none. A failed reference run is now an unusable comparison
+  (`reference_also_rejected`), and a test with a failing reference run covers it.
+
+Still true: the `cross-format-validation` job is skipped on pull requests, so the 185-test
+pull-request run does not show that it passes; the first run on `main` is the check.
+
 Not changed: one reviewer proposed that "Every `shared_library` entry carries `load_kind`"
 be restricted to PE; a skeptic refuted it because the sentence is in the PE-only note
 and ELF entries are described elsewhere.
