@@ -50,7 +50,8 @@ All milestones are research goals; no feature is complete until demonstrated and
 - [x] Extract Mach-O dylib, dynamic-linker, rpath and platform load commands for thin and universal binaries; compare with `llvm-objdump` ([Mach-O notes](docs/research/macho-dependencies.md))
 - [x] Compare all four parsers with independent tools on real files and with seeded differential fuzzing; record the defects found ([corpus validation](docs/research/corpus-validation.md))
 - [ ] Sustained coverage-guided fuzzing, benchmarks and a test corpus independent of one machine
-- [ ] Observe (rather than flag) PE delay-load imports and CLR references, WebAssembly import signatures, and Mach-O bindings
+- [x] Observe (rather than flag) PE delay-load imports and CLR header, assembly and module references ([PE notes](docs/research/pe-dependencies.md)); compare with `llvm-readobj`, real MSVC-built files and `dnfile`
+- [ ] Observe WebAssembly import signatures and Mach-O bindings
 
 Static extraction now exists for all four formats, but this does not complete M1 or the
 full v0.3 milestone: the unchecked items above remain, observed names are not

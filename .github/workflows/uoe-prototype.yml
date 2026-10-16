@@ -60,17 +60,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends binutils clang lld llvm
+      - name: Install the optional .NET metadata oracle (tests only, pinned)
+        run: python3 -m pip install "dnfile==0.18.0" "pefile==2024.8.26"
       - name: Record tool versions
         run: |
           readelf --version | head -1
           llvm-objdump --version | sed -n 1,2p
+          lld-link --version | head -1
           node --version
+          python3 -m pip show dnfile pefile | grep -E '^(Name|Version)'
       - name: Format tests with every independent reference present
-        run: python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies -v
-      - name: Seeded differential fuzz (WASM vs V8, Mach-O vs llvm-objdump)
+        shell: bash
+        run: |
+          # Without pipefail the pipeline below would report tee's status, not the tests'.
+          set -o pipefail
+          python3 -m unittest tests.test_wasm_dependencies tests.test_macho_dependencies tests.test_elf_dependencies tests.test_pe_dependencies tests.test_clr_dependencies tests.test_corpus_check -v 2>&1 | tee unittest.log
+          # This job exists for the independent references. A comparison that was skipped (a
+          # missing tool, or a failed LLVM build) must fail it rather than look green.
+          for name in test_linked_delay_load_images_match_llvm_readobj test_synthetic_fixture_matches_objdump \
+                      test_synthetic_assemblies_agree_with_dnfile test_delay_load_pe_is_compared_with_llvm_readobj \
+                      test_managed_pe_is_compared_with_dnfile test_a_disagreement_with_the_reference_fails_the_run \
+                      test_a_broken_reference_is_an_error_not_a_quiet_pass \
+                      test_a_file_named_like_an_option_is_not_interpreted_by_the_reference_tool; do
+            grep -Eq "^${name} .*\.\.\. ok$" unittest.log || { echo "::error::${name} did not run to completion (skipped or missing)"; exit 1; }
+          done
+      - name: Seeded differential fuzz (WASM vs V8, Mach-O vs llvm-objdump, .NET metadata vs dnfile)
         run: |
           python3 tests/fuzz_differential.py wasm --seed 101 --count 5000
           python3 tests/fuzz_differential.py macho --seed 101 --count 1000
+          python3 tests/fuzz_differential.py clr --seed 101 --count 2000
       - name: Compare extraction with readelf on the runner's own ELF files
         run: python3 tests/corpus_check.py /usr/bin --limit 400 --fail-on-reject
 

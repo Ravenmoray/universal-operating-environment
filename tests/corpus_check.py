@@ -6,7 +6,8 @@ Files are only read, never executed. Reference tools are optional; a comparison
 is skipped (and counted) when its tool is missing:
 
   ELF     readelf (binutils): NEEDED entries and the program interpreter
-  PE      llvm-readobj --coff-imports: DLL names and imported symbol names
+  PE      llvm-readobj --coff-imports: DLL names, delay-load vs static, imported symbol names;
+          for managed images, dnfile (optional pip package) assembly/module references
   WASM    Node.js WebAssembly.Module.imports (compiles; never instantiates)
   Mach-O  llvm-objdump --macho --dylibs-used --rpaths
 
@@ -32,7 +33,7 @@ from uoe.inspector import InspectionError, inspect_file  # noqa: E402
 
 NODE_SCRIPT = ('const m=new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));'
                'console.log(JSON.stringify(WebAssembly.Module.imports(m)))')
-PE_SUFFIXES = ('.exe', '.dll', '.sys', '.ocx', '.efi')
+PE_SUFFIXES = ('.exe', '.dll', '.pyd', '.sys', '.ocx', '.efi')
 
 
 def group_by_module(rows):
@@ -49,7 +50,9 @@ def run(command):
 def candidates(paths):
     seen = set()  # a symlinked root (e.g. /lib -> /usr/lib) or hard link must count once
     for root in paths:
-        root = Path(root)
+        # Absolute, so a file named like an option (``--eval=...``) can never be parsed as
+        # one by the reference tools it is handed to (node, readelf, llvm-*).
+        root = Path(os.path.abspath(root))
         files = [root] if root.is_file() else (
             Path(dirpath) / name for dirpath, _, names in os.walk(root) for name in sorted(names))
         for path in files:
@@ -79,6 +82,8 @@ def reference_elf(path):
     if not shutil.which('readelf'):
         return None
     dynamic, headers = run(['readelf', '-dW', str(path)]), run(['readelf', '-lW', str(path)])
+    if dynamic.returncode or headers.returncode:
+        return 'rejected'       # empty output from a failed run must not pass as "no libraries"
     return (re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic.stdout),
             re.findall(r'Requesting program interpreter: (.*?)\]', headers.stdout))
 
@@ -92,15 +97,73 @@ def observed_elf(report):
 def reference_pe(path):
     if not shutil.which('llvm-readobj'):
         return None
-    out = run(['llvm-readobj', '--coff-imports', str(path)]).stdout
-    blocks = re.findall(r'Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S)
-    return [(name, [n for n, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
-            for name, body in blocks]
+    done = run(['llvm-readobj', '--coff-imports', str(path)])
+    if done.returncode:
+        return 'rejected'       # empty output from a failed run must not pass as "no imports"
+    out = done.stdout
+    # Top-level blocks start in column 0; nested "  Import {" entries inside a
+    # DelayImport block are indented and are not separate DLLs.
+    blocks = re.findall(r'^(Delay)?Import \{\s*\n\s+Name: (.*?)\n(.*?)\n\}', out, re.S | re.M)
+    return [('delay' if delay else 'static', name,
+             [n for n, _ in re.findall(r'Symbol: (.+?) \((\d+)\)', body)])
+            for delay, name, body in blocks]
 
 
 def observed_pe(report):
-    return [(d['name'], [s['name'] for s in d['symbols'] if 'name' in s])
-            for d in report['static_dependencies']]
+    return [(d['load_kind'], d['name'], [s['name'] for s in d['symbols'] if 'name' in s])
+            for d in report['static_dependencies'] if d['kind'] == 'shared_library']
+
+
+class ReferenceIncomplete(Exception):
+    """dnfile read the file only partly, so it cannot serve as a reference for it."""
+
+
+def clr_facts(dn):
+    """Assembly references and module references of a parsed ``dnfile.dnPE``, as uoe reports them."""
+    import hashlib
+
+    def text(item):
+        return item.value.decode() if isinstance(item.value, bytes) else item.value
+    if dn.net.metadata.struct.NumberOfStreams != len(dn.net.metadata.streams_list):
+        raise ReferenceIncomplete('dnfile stopped before reading every declared metadata stream')
+    for stream in dn.net.metadata.streams_list:
+        # dnfile matches the whole 8-byte padded name field, so a stream whose NUL padding is
+        # not all zero (which CoreCLR and uoe accept) falls into a generic stream and is lost.
+        if type(stream).__name__ == 'GenericStream' and bytes(stream.struct.Name).split(b'\0')[0] in (
+                b'#~', b'#-', b'#Strings', b'#US', b'#GUID', b'#Blob'):
+            raise ReferenceIncomplete('dnfile did not recognise a standard metadata stream')
+    tables = dn.net.mdtables
+    assemblies = []
+    for row in (tables.AssemblyRef.rows if tables.AssemblyRef else []):
+        key = bytes(row.PublicKey.value) if row.PublicKey is not None and row.PublicKey.value else b''
+        token = (hashlib.sha1(key).digest()[-8:][::-1].hex() if row.Flags.afPublicKey else key.hex()) if key else None
+        assemblies.append((text(row.Name), f'{row.MajorVersion}.{row.MinorVersion}.{row.BuildNumber}.{row.RevisionNumber}',
+                           text(row.Culture) or None, token))
+    modules = [text(row.Name) for row in (tables.ModuleRef.rows if tables.ModuleRef else [])]
+    return assemblies, modules
+
+
+def reference_clr(path):
+    """Managed references via the optional dnfile package (None when not importable)."""
+    try:
+        import dnfile
+    except ImportError:
+        return None
+    try:
+        parsed = dnfile.dnPE(str(path))
+    except Exception:       # dnfile itself could not parse the file
+        return 'rejected'
+    try:
+        return clr_facts(parsed)
+    except ReferenceIncomplete:
+        return 'rejected'
+
+
+def observed_clr(report):
+    deps = report['static_dependencies']
+    return ([(d['name'], d['version'], d['culture'], d['public_key_token'])
+             for d in deps if d['kind'] == 'managed_assembly'],
+            [d['name'] for d in deps if d['kind'] == 'native_module_reference'])
 
 
 def reference_wasm(path):
@@ -172,6 +235,18 @@ def main(argv=None):
         if status in ('partial_static',):
             counts['partial'] += 1
             continue
+        if fmt == 'PE' and any(d['kind'] == 'managed_runtime' for d in report['static_dependencies']):
+            counts['managed'] += 1
+            managed = reference_clr(path)
+            if managed is None:
+                counts['managed_no_reference_tool'] += 1
+            elif managed == 'rejected':
+                counts['managed_reference_also_rejected'] += 1
+            elif managed == observed_clr(report):
+                counts['managed_matched'] += 1
+            else:
+                counts['disagreed'] += 1
+                problems[fmt + ' managed disagreed'].append(str(path))
         reference, observed = COMPARERS[fmt]
         expected = reference(path)
         if expected is None:

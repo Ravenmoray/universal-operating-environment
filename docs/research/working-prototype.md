@@ -9,7 +9,7 @@ Neither command runs, loads or resolves the input.
 | Format | Observed | Details |
 | --- | --- | --- |
 | ELF | `PT_INTERP`, direct `DT_NEEDED` | [ELF](elf-dependencies.md) |
-| PE / PE32+ | Normal import descriptors, named and ordinal symbols | [PE](pe-dependencies.md) |
+| PE / PE32+ | Normal and delay-load imports (named and ordinal symbols); .NET assembly and native-module references | [PE](pe-dependencies.md) |
 | WebAssembly | Import section: modules, symbols, kinds; WASI preview1 name hint | [WASM](wasm-dependencies.md) |
 | Mach-O (thin and universal) | Dylib commands, dynamic linker, rpaths, platform versions, per-slice | [Mach-O](macho-dependencies.md) |
 
@@ -88,7 +88,7 @@ Building needs setuptools 77 or newer (for the SPDX `license` expression in `pyp
 
 ## Scope and limitations
 
-- The prototype identifies binary headers and static dependencies for ELF, PE, WebAssembly and Mach-O. PE delay-load imports and CLR references, WebAssembly import signatures, and Mach-O bindings and `@rpath` expansion are not extracted; each is reported as an unknown where it applies. WebAssembly component-model binaries are not analyzed at all: `inspect` and `plan` reject them with an error (exit status 2) rather than reporting an unknown.
+- The prototype identifies binary headers and static dependencies for ELF, PE, WebAssembly and Mach-O. WebAssembly import signatures, the .NET target framework and runtime assembly resolution, and Mach-O bindings and `@rpath` expansion are not extracted; each is reported as an unknown where it applies. WebAssembly component-model binaries are not analyzed at all: `inspect` and `plan` reject them with an error (exit status 2) rather than reporting an unknown.
 - Static headers cannot identify every runtime-loaded dependency, including the fixture's dynamically loaded DLL.
 - Runtime presence does not establish API compatibility, permission to run, licensing, or safety.
 - Files larger than 2 GiB are refused in this v0 experiment. A universal Mach-O binary's slices are enumerated, but `plan` models only a same-architecture native candidate (no Rosetta or other translation).

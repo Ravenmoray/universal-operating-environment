@@ -62,14 +62,14 @@ No tagged release or production compatibility claim is implied.
    in `uoe.graph`, with the original experiment as a compatibility entry point.
    Run old and new tests in CI whenever that implementation changes. Keep #21
    open for bounded performance/fuzz work and the remaining trust-boundary audit.
-2. **Finish v0.3 (#13).** ELF (PT_INTERP/DT_NEEDED), PE (normal imports),
+2. **Finish v0.3 (#13).** ELF (PT_INTERP/DT_NEEDED), PE (normal and delay-load imports, .NET references),
    WebAssembly (import section) and Mach-O (dylib, dynamic-linker, rpath, platform and
    universal-slice commands) extraction are implemented, bounded, and compared with
    readelf, objdump/llvm-readobj, V8 and llvm-objdump on project-owned fixtures,
    real vendor files and seeded differential fuzzing. Do not call the full v0.3
    phase complete until the remaining gates pass: sustained coverage-guided fuzzing,
-   a corpus independent of one machine, and observation (not just flagging) of PE
-   delay-load imports, CLR references, WebAssembly import signatures and Mach-O bindings.
+   a corpus independent of one machine, and observation (not just flagging) of
+   WebAssembly import signatures and Mach-O bindings.
 3. **Formalize adapters (#14).** Feed observed requirements into versioned
    native/Wine/WASM descriptors, preserving unknown and unsupported outcomes.
 4. **Build execution controls before broadening execution (#15).** Isolation and

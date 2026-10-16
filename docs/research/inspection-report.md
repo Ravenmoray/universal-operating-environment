@@ -43,12 +43,28 @@ let a reviewer find the exact bytes with an independent tool.
 | `kind` | Formats | `name` is | Extra fields | `evidence.source` |
 | --- | --- | --- | --- | --- |
 | `interpreter` | ELF, Mach-O | program interpreter / dynamic linker path | — | `PT_INTERP`, `LC_LOAD_DYLINKER` |
-| `shared_library` | ELF, PE, Mach-O | library name as written in the file | PE: `symbols` (named with `hint`, or `ordinal`); Mach-O: `load_kind`, `current_version`, `compatibility_version`; ELF: `string_file_offset` in evidence | `DT_NEEDED`, `PE_IMPORT_DESCRIPTOR`, `LC_LOAD_*_DYLIB`, `LC_REEXPORT_DYLIB` |
+| `shared_library` | ELF, PE, Mach-O | library name as written in the file | PE: `load_kind` (`static`, `delay`) and `symbols` (named with `hint`, or `ordinal`); Mach-O: `load_kind`, `current_version`, `compatibility_version`; ELF: `string_file_offset` in evidence | `DT_NEEDED`, `PE_IMPORT_DESCRIPTOR`, `PE_DELAY_IMPORT_DESCRIPTOR`, `LC_LOAD_*_DYLIB`, `LC_REEXPORT_DYLIB` |
 | `wasm_import_module` | WASM | import module name (may be `""`) | `symbols` (`name`, `kind`, `type_index`/`mutable`), optional `interface_hint` | `WASM_IMPORT_SECTION` |
 | `runtime_search_path` | Mach-O | an `LC_RPATH` entry | — | `LC_RPATH` |
 | `platform` | Mach-O | `macos`, `ios`, … or `unknown:N` | `minimum_os_version`, `sdk_version` | `LC_BUILD_VERSION`, `LC_VERSION_MIN_*` |
+| `managed_runtime` | PE (.NET) | CLR metadata version string, e.g. `v4.0.30319` (a format version, not the runtime or framework the image needs) | `cor_header_version`, `flags`, `flags_raw` | `IMAGE_COR20_HEADER` |
+| `managed_assembly` | PE (.NET) | referenced assembly name | `version`, `culture`, `public_key_token` | `METADATA_ASSEMBLYREF` |
+| `native_module_reference` | PE (.NET) | a `ModuleRef` row: usually a native library named by a P/Invoke declaration, but also a secondary module of a multi-module assembly (the `ImplMap` table that tells them apart is not read) | — | `METADATA_MODULEREF` |
 
 In universal Mach-O files each entry also has `slice: {index, architecture}`.
+
+PE and .NET details: `load_kind` is `static` for a normal import and `delay` for a
+delay-load import (loaded on first call, so a conditional requirement). For
+`managed_assembly`, `culture` is `null` for the invariant culture and `public_key_token`
+is `null` when the reference carries no key; otherwise it is the stored 8-byte token, or
+the token computed from the full public key when the reference carries one. For
+`managed_runtime`, `flags` names the recognised `COMIMAGE_FLAGS_*` bits (unrecognised
+bits appear as `unknown:0x…`) and `flags_raw` is the unmodified header value.
+`native_module_reference` names are written as the metadata gives them (for example
+`kernel32.dll` or `libdl.so`), not resolved to a file. The `managed_runtime` string is the
+same `v4.0.30319` for `Python.Runtime.dll` (which references `netstandard` 2.0) and for
+`ClrLoader.dll` (which references `mscorlib` 4.0.0.0), so it does not identify what the
+image requires; the target framework is a custom attribute that is not decoded.
 
 Names are exactly what the file says. A name is **not** a verified capability
 contract, does not show the library is installed, and is not resolved against any

@@ -54,20 +54,30 @@ def plan_inspection(inspection: dict, *, host_os: str | None = None,
             "), so this is not a launchable executable or shared object",
             ["Observed interpreter/library names still require host resolution and behavioral tests"])
     elif fmt == "PE":
+        observed = inspection.get("static_dependencies", [])
+        notes = []
+        delayed = sorted(d["name"] for d in observed if d.get("load_kind") == "delay")
+        if delayed:
+            notes.append("Delay-loaded DLLs are loaded on first use, so a missing one may "
+                         "only fail at run time: " + ", ".join(delayed))
+        if any(d["kind"] == "managed_runtime" for d in observed):
+            notes.append("Managed (.NET) image: a compatible CLR/.NET runtime is required "
+                         "in addition to any PE runner; the target framework is not decoded")
         if host_os == "windows":
             add("native", same_arch,
                 "Windows native loader may support the executable's architecture",
-                ["Windows APIs, DLLs, licensing, signing and security requirements unknown"])
+                ["Windows APIs, DLLs, licensing, signing and security requirements unknown"] + notes)
         elif host_os == "linux":
             runner = bool(runtimes.get("wine", False))
             add("wine", runner and same_arch and binary["bits"] == 64,
                 "Wine may supply some Windows APIs for this PE binary",
                 ["Wine presence is not API compatibility",
                  "PE32+ and host architecture must match for this v0 strategy",
-                 "Observed DLL imports still require resolution; dynamic LoadLibrary requirements remain unknown"])
+                 "Observed DLL imports still require resolution; dynamic LoadLibrary requirements remain unknown"]
+                + notes)
         else:
             add("wine", False, "No PE execution adapter defined for this host",
-                ["No supported execution plan currently available"])
+                ["No supported execution plan currently available"] + notes)
     elif fmt == "WASM":
         modules = [d for d in inspection.get("static_dependencies", [])
                    if d["kind"] == "wasm_import_module"]
