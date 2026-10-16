@@ -1,0 +1,68 @@
+{
+  "request": {
+    "schema_version": "uoe.authorization-request.v0",
+    "request_id": "request:offline-1",
+    "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "adapter_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "image_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "host_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "policy_revision": "policy:offline-v0",
+    "argv": [
+      "--self-test"
+    ],
+    "limits": {
+      "cpu_ms": 1000,
+      "wall_ms": 2000,
+      "memory_bytes": 67108864,
+      "disk_bytes": 16777216,
+      "pids": 1
+    },
+    "rights": {
+      "network": "none",
+      "host_mounts": [],
+      "secrets": [],
+      "devices": [],
+      "privileged": false
+    }
+  },
+  "approval": {
+    "approval_id": "approval:1",
+    "subject": {
+      "schema_version": "uoe.authorization-request.v0",
+      "request_id": "request:offline-1",
+      "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "adapter_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "host_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "policy_revision": "policy:offline-v0",
+      "argv": [
+        "--self-test"
+      ],
+      "limits": {
+        "cpu_ms": 1000,
+        "wall_ms": 2000,
+        "memory_bytes": 67108864,
+        "disk_bytes": 16777216,
+        "pids": 1
+      },
+      "rights": {
+        "network": "none",
+        "host_mounts": [],
+        "secrets": [],
+        "devices": [],
+        "privileged": false
+      }
+    },
+    "issued_at": 100,
+    "expires_at": 200
+  },
+  "context": {
+    "approval_authenticated": true,
+    "approval_revoked": false,
+    "approval_consumed": false,
+    "isolation_ready": true,
+    "host_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "policy_revision": "policy:offline-v0"
+  },
+  "now": 150
+}
