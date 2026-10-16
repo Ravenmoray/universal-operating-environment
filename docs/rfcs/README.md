@@ -57,4 +57,6 @@ Do not claim that unknown binaries run safely, that generated shims are correct 
 - [RFC 0002 — Capability-Centered Computing](0002-capability-centered-computing.md) — **Draft**, [discussion issue #7](https://github.com/Ravenmoray/universal-operating-environment/issues/7)
 - [Proposal — Minimal Capability Graph](proposals/minimal-capability-graph.md) — **Draft**, [research issue #9](https://github.com/Ravenmoray/universal-operating-environment/issues/9)
 
+- [Proposal — Exact-scope execution authorization](proposals/execution-authorization-contract.md) — **Draft**, data-only v0.5 contract for [issue #15](https://github.com/Ravenmoray/universal-operating-environment/issues/15)
+
 We want a repository that is **easy for autonomous systems to understand** while remaining accountable to human operators and maintainers.
